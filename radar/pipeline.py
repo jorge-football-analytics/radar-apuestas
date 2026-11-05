@@ -168,6 +168,7 @@ def run(s: Settings | None = None, now: datetime | None = None, send_alerts: boo
                      (lg, (now - timedelta(hours=3)).isoformat())).empty:
             ucl_scores += OddsAPI(s, db).fetch_scores(lg)
     n_settled = settle(db, hist, now, ucl_scores or None)
+    weights = recalibrate(db, s)
 
     # 2) Cuotas
     frames = [fd.load_fixtures(), OddsAPI(s, db).fetch(now)]
