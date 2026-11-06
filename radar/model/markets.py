@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 # Selecciones que forman un mercado completo (para quitar el margen de la casa)
-GROUPS = {"1x2": ["H", "D", "A"], "ou": ["O", "U"], "btts": ["Y", "N"]}
+GROUPS = {"1x2": ["H", "D", "A"], "ou": ["O", "U"], "btts": ["Y", "N"], "ml": ["H", "A"], "spread": ["H", "A"]}
 
 
 def market_probs(m: np.ndarray, points: list[float] | None = None) -> dict[tuple[str, str, float], float]:
@@ -54,7 +54,7 @@ def market_fair_probs(odds: pd.DataFrame) -> dict[tuple[str, str, float], tuple[
     out = {}
     for (market, point), g in odds.groupby(["market", "point"]):
         sels = GROUPS.get(market)
-        if not sels:
+        if not sels or (float(point) * 2) % 1:  # líneas asiáticas de cuarto (3.25, -0.75): se liquidan a medias
             continue
         per_book = []
         for book, gb in g.groupby("bookmaker"):
@@ -73,19 +73,40 @@ def market_fair_probs(odds: pd.DataFrame) -> dict[tuple[str, str, float], tuple[
     return out
 
 
-LABELS = {("1x2", "H"): "Gana {home}", ("1x2", "D"): "Empate", ("1x2", "A"): "Gana {away}",
-          ("ou", "O"): "Más de {pt} goles", ("ou", "U"): "Menos de {pt} goles",
-          ("btts", "Y"): "Ambos marcan: sí", ("btts", "N"): "Ambos marcan: no"}
+def _fmt(x: float) -> str:
+    return f"{x:+g}".replace("+0", "0")
 
 
-def label(market: str, sel: str, point: float, home: str, away: str) -> str:
-    return LABELS.get((market, sel), f"{market} {sel}").format(home=home, away=away, pt=point)
+def label(market: str, sel: str, point: float, home: str, away: str, unit: str = "goles") -> str:
+    if market == "1x2":
+        return {"H": f"Gana {home}", "D": "Empate", "A": f"Gana {away}"}[sel]
+    if market == "ml":
+        return f"Gana {home}" if sel == "H" else f"Gana {away}"
+    if market == "spread":
+        return f"{home} {_fmt(point)}" if sel == "H" else f"{away} {_fmt(-point)}"
+    if market == "ou":
+        return f"{'Más' if sel == 'O' else 'Menos'} de {point:g} {unit}"
+    if market == "btts":
+        return "Ambos marcan: sí" if sel == "Y" else "Ambos marcan: no"
+    return f"{market} {sel}"
 
 
-def outcome(market: str, sel: str, point: float, hg: int, ag: int) -> int:
+def outcome(market: str, sel: str, point: float, hg: int, ag: int) -> int | None:
+    """1 ganada, 0 perdida, None nula (empate en hándicap/total exacto)."""
     if market == "1x2":
         return int({"H": hg > ag, "D": hg == ag, "A": hg < ag}[sel])
+    if market == "ml":
+        if hg == ag:
+            return None
+        return int(hg > ag) if sel == "H" else int(ag > hg)
+    if market == "spread":
+        diff = hg + point - ag
+        if diff == 0:
+            return None
+        return int(diff > 0) if sel == "H" else int(diff < 0)
     if market == "ou":
+        if hg + ag == point:
+            return None
         return int((hg + ag > point) if sel == "O" else (hg + ag < point))
     if market == "btts":
         both = hg > 0 and ag > 0

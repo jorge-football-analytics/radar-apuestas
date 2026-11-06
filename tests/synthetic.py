@@ -69,7 +69,7 @@ def make_fixtures(pairs, kickoff, truth, league="laliga", generous_book="bwin", 
         lam = np.exp(base + home + att[i] + de[j])
         mu = np.exp(base + att[j] + de[i])
         pr = market_probs(score_matrix(lam, mu, -0.05), [2.5])
-        for book in ("bet365", "pinnacle", "williamhill", "betvictor", generous_book):
+        for book in ("bet365", "pinnacle", "williamhill", "betvictor", "bwin"):
             m = 1.02 if book == "pinnacle" else 1.06
             for (market, sel, pt), p in pr.items():
                 if market == "btts" or (market == "ou" and pt != 2.5):
@@ -77,6 +77,52 @@ def make_fixtures(pairs, kickoff, truth, league="laliga", generous_book="bwin", 
                 price = 1 / (p * m) * float(np.exp(rng.normal(0, 0.01)))
                 if book == generous_book and sel == "H":
                     price *= boost
-                rows.append(dict(league=league, kickoff=kickoff, home=h, away=a, source="football-data",
+                rows.append(dict(sport="football", league=league, kickoff=kickoff, home=h, away=a, source="football-data",
                                  bookmaker=book, market=market, selection=sel, point=pt, price=round(price, 2)))
     return pd.DataFrame(rows)
+
+
+# ------------------------------------------------------------------ NBA y tenis sintéticos
+NBA_TEAMS = ["Boston Celtics", "Los Angeles Lakers", "LA Clippers", "Denver Nuggets", "Miami Heat", "New York Knicks",
+             "Golden State Warriors", "Phoenix Suns", "Dallas Mavericks", "Milwaukee Bucks"]
+
+
+def make_nba(seed=0, n_days=500, start="2024-10-20"):
+    rng = np.random.default_rng(seed)
+    strength = {t: s for t, s in zip(NBA_TEAMS, np.linspace(-8, 8, len(NBA_TEAMS)))}
+    rows = []
+    for d in range(n_days):
+        date = pd.Timestamp(start) + pd.Timedelta(days=d)
+        if date.month in (7, 8, 9):
+            continue
+        teams = list(rng.permutation(NBA_TEAMS))
+        for i in range(0, len(teams), 2):
+            h, a = teams[i], teams[i + 1]
+            margin = strength[h] - strength[a] + 3 + rng.normal(0, 12)
+            total = 225 + rng.normal(0, 18)
+            hg = int(round((total + margin) / 2))
+            ag = int(round((total - margin) / 2))
+            if hg == ag:
+                hg += 1
+            rows.append(dict(league="nba", date=date, home=h, away=a, hg=hg, ag=ag, neutral=False))
+    return pd.DataFrame(rows), strength
+
+
+PLAYERS = [f"Jugador{c} {c}." for c in "ABCDEFGHIJKLMNOP"]
+
+
+def make_tennis(seed=0, n=4000):
+    rng = np.random.default_rng(seed)
+    skill = {p: s for p, s in zip(PLAYERS, np.linspace(1300, 1900, len(PLAYERS)))}
+    rows = []
+    for k in range(n):
+        a, b = rng.choice(PLAYERS, 2, replace=False)
+        pa = 1 / (1 + 10 ** ((skill[b] - skill[a]) / 400))
+        w, l = (a, b) if rng.random() < pa else (b, a)
+        pw = pa if w == a else 1 - pa
+        rows.append(dict(tour="atp", date=pd.Timestamp("2023-01-01") + pd.Timedelta(hours=8 * k), tournament="X",
+                         surface=["Hard", "Clay", "Grass"][k % 3], winner=w, loser=l, completed=True,
+                         b365_w=round(1 / (pw * 1.06), 2), b365_l=round(1 / ((1 - pw) * 1.06), 2),
+                         ps_w=round(1 / (pw * 1.02), 2), ps_l=round(1 / ((1 - pw) * 1.02), 2),
+                         avg_w=np.nan, avg_l=np.nan, max_w=np.nan, max_l=np.nan))
+    return pd.DataFrame(rows), skill

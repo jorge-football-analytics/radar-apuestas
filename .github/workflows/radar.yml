@@ -15,7 +15,7 @@ concurrency:
 jobs:
   analizar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -24,24 +24,36 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Los ficheros descargados (históricos) se guardan en caché, no en el repo
+      - uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: raw-${{ github.run_id }}
+          restore-keys: raw-
+
       - name: Instalar dependencias
-        run: pip install numpy pandas scipy requests python-dotenv
+        run: pip install numpy pandas scipy requests python-dotenv openpyxl
 
       - name: Analizar partidos y avisar
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
           APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SPORTS: ${{ vars.SPORTS || 'football,tennis,basketball,nfl' }}
           BANKROLL: ${{ vars.BANKROLL || '100' }}
-          MIN_EV: ${{ vars.MIN_EV || '0.04' }}
-          ALERT_EV: ${{ vars.ALERT_EV || '0.06' }}
+          MIN_EV: ${{ vars.MIN_EV || '0.03' }}
+          ALERT_EV: ${{ vars.ALERT_EV || '0.05' }}
+          ALERT_MAX_DAY: ${{ vars.ALERT_MAX_DAY || '5' }}
         run: python -m radar run
 
       - name: Guardar base de datos en el repo
         run: |
           git config user.name "radar-bot"
           git config user.email "radar-bot@users.noreply.github.com"
+          git rm -r -q --cached --ignore-unmatch data/raw
           git add data/
           git diff --cached --quiet || git commit -m "Análisis $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git pull --rebase -X theirs || true
           git push

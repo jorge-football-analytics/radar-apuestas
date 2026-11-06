@@ -52,11 +52,11 @@ def _parse_dates(df: pd.DataFrame) -> pd.Series:
     return d.fillna(d2)
 
 
-def load_history(today: date, seasons: int) -> pd.DataFrame:
+def load_history(today: date, seasons: int, leagues: list[str] | None = None) -> pd.DataFrame:
     """Partidos jugados de las ligas configuradas, últimas `seasons` temporadas (la actual incluida)."""
     frames = []
     for key, lg in LEAGUES.items():
-        if not lg["fd"]:
+        if not lg["fd"] or (leagues is not None and key not in leagues):
             continue
         for off in range(-(seasons - 1), 1):
             code = season_code(today, off)
@@ -68,6 +68,7 @@ def load_history(today: date, seasons: int) -> pd.DataFrame:
             df = _read_csv(content)
             if df.empty or "HomeTeam" not in df:
                 continue
+            df = df.copy()
             df["league"] = key
             df["season"] = code
             frames.append(df)
@@ -132,7 +133,7 @@ def tidy_fixtures(raw: pd.DataFrame) -> pd.DataFrame:
         if pd.isna(ko):
             continue
         ko_iso = ko.tz_convert("UTC").isoformat()
-        base = dict(league=FD_TO_LEAGUE[r["Div"]], kickoff=ko_iso, home=str(r["HomeTeam"]).strip(),
+        base = dict(sport="football", league=FD_TO_LEAGUE[r["Div"]], kickoff=ko_iso, home=str(r["HomeTeam"]).strip(),
                     away=str(r["AwayTeam"]).strip(), source="football-data")
         for pre, book in BOOK_PREFIX.items():
             for sel in "HDA":

@@ -1,136 +1,96 @@
-# ⚽ Radar de apuestas
+# 📡 Radar de apuestas · bet365
 
-Analiza automáticamente los partidos de LaLiga, Premier, Serie A, Bundesliga, Ligue 1 y Champions. Compara la probabilidad real estimada con las cuotas de bet365 y del resto del mercado, y te avisa por Telegram cuando encuentra una **apuesta de valor** o una **combinada** con valor esperado positivo. Cada partido jugado se usa para medir el sistema y recalibrarlo.
+Compara las cuotas de **bet365** con la probabilidad real de cada resultado en fútbol, tenis, baloncesto y NFL.
+Te avisa por Telegram solo de las mejores jugadas y enseña todo lo demás, ordenado, en la web.
 
-Coste: **0 €**. GitHub Actions ejecuta el análisis y Streamlit Community Cloud sirve la web.
+Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community Cloud sirve la web.
 
----
+## Qué cubre
 
-## Qué hace en cada ejecución (cada 3 horas)
+| Deporte | Competiciones | Modelo propio | Cuota de bet365 |
+|---|---|---|---|
+| ⚽ Fútbol | LaLiga, Hypermotion, Premier, Championship, Serie A y B, Bundesliga 1 y 2, Ligue 1 y 2, Eredivisie, Portugal, Bélgica, Turquía, Grecia, Escocia | Dixon-Coles (goles) | football-data.co.uk (gratis, martes y viernes) |
+| ⚽ Copas UEFA | Champions, Europa League, Conference | No (solo mercado) | OddsPapi |
+| 🎾 Tenis | Todos los torneos ATP y WTA activos | Elo general + por superficie | OddsPapi |
+| 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | Elo + puntos esperados | OddsPapi |
+| 🏈 NFL | Temporada regular y playoffs | Elo + puntos esperados | OddsPapi |
 
-1. **Descarga datos** de football-data.co.uk: 4 temporadas de resultados de cada liga, con cuotas de apertura y cierre de bet365 y Pinnacle, más las cuotas de la próxima jornada.
-2. **Ajusta un modelo Dixon-Coles por liga.** Estima la fuerza de ataque y defensa de cada equipo, la ventaja de jugar en casa y la corrección de marcadores bajos. Los partidos recientes pesan más (vida media de un año aproximadamente).
-3. **Descarga cuotas en vivo** de ~40 casas, bet365 incluida, con The Odds API. Solo gasta créditos en las ligas con partidos en las próximas 72 h y reparte los 500 créditos del mes para no quedarse sin ellos.
-4. **Bajas:** lesionados y sancionados de API-Football (si tu plan lo permite) y las que apuntes en `data/bajas_manual.csv`. Rebajan los goles esperados del equipo.
-5. **Calcula la probabilidad final** como mezcla del modelo y del consenso del mercado sin margen. El peso de cada parte lo decide el backtest y luego los resultados reales.
-6. **Detecta valor** con `EV = probabilidad × cuota − 1`. Busca la mejor cuota del mercado y la de bet365, y sugiere un stake con Kelly fraccional.
-7. **Monta combinadas** conservadoras, equilibradas y arriesgadas. Todas las patas van en la misma casa y cada una tiene valor esperado positivo.
-8. **Avisa por Telegram** de lo nuevo con EV ≥ +6 % y confianza media o alta. Nunca repite un aviso. Cada lunes manda un resumen de rendimiento.
-9. **Aprende:** liquida los partidos jugados y mide acierto, ROI, CLV y calidad de las probabilidades. Con esos datos recalibra el peso modelo/mercado.
+**The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos.
 
-### Qué significa la confianza
+## Cómo decide
 
-| Confianza | Criterio |
-|---|---|
-| 🟢 **Alta** | El modelo propio y el consenso del mercado coinciden en que la cuota está por encima de lo justo, con 4 casas o más. |
-| 🟡 **Media** | Solo el modelo ve valor, o no hay modelo pero la cuota supera claramente el consenso de 6 casas o más. |
-| 🟠 **Baja** | El valor sale solo de la mezcla. Se guarda y se mide, pero no se avisa. |
+1. Estima la probabilidad real de cada resultado mezclando su modelo con el consenso del mercado sin margen (Pinnacle pesa doble). El peso del modelo lo fija el backtest y se reajusta con cada partido jugado.
+2. Compara esa probabilidad con la cuota de bet365: `valor esperado = probabilidad × cuota − 1`.
+3. Clasifica cada jugada:
 
----
+| Nivel | Qué significa | Dónde sale |
+|---|---|---|
+| 💎 **Élite** | Valor ≥ +5 %, modelo y mercado de acuerdo, cuota entre 1,30 y 4 | Telegram (máx. 5 al día) y la web |
+| **Con valor** | Cuota de bet365 confirmada con valor ≥ +3 % | Web |
+| **Por confirmar** | El mercado sugiere valor, pero falta la cuota de bet365. Se indica la cuota mínima | Web |
+| **Pronóstico** | La mejor opción del partido aunque no tenga ventaja | Web |
 
-## Qué esperar (léelo antes de apostar)
+- **Riesgo:** bajo (prob. ≥ 60 %), medio (40-60 %) o alto (< 40 %).
+- **Combinadas:** conservadora, equilibrada y arriesgada, siempre en bet365.
 
-- **No existe "alto acierto + cuota alta".** Una cuota de 3.00 acierta como mucho un tercio de las veces. El objetivo es el **valor**: ganar dinero a largo plazo aunque se pierdan muchas apuestas.
-- **El mercado es muy eficiente** en las grandes ligas. La ventaja suele venir de encontrar casas que pagan más que el consenso, más que de que el modelo "sepa más" que todos.
-- **La métrica que manda es el CLV** (*closing line value*). Si sistemáticamente apuestas a mejor cuota que la de cierre, tienes ventaja real. Con 50 o 100 apuestas, el ROI es casi todo suerte.
-- **Mira el backtest** en la pestaña 🧪. Si el intervalo del ROI incluye el 0, todavía no hay evidencia de ventaja. Lo sensato es empezar con stakes mínimos o solo observando.
-- **bet365 limita las cuentas que ganan** de forma constante. Ten cuenta en varias casas.
-- **Las cuotas de football-data pueden tener 1-2 días.** El aviso lo indica. Comprueba siempre la cuota actual antes de apostar.
-- **Juega solo con una banca que puedas perder.** Si deja de ser divertido: jugarbien.es o el registro de autoexclusión (RGIAJ).
+En Telegram recibes:
+- las jugadas élite;
+- como mucho una combinada con valor al día;
+- un resumen cada mañana;
+- un balance los lunes.
 
----
+## Lo que dicen tus datos (léelo)
+
+El backtest con datos reales del último año (13.000 selecciones de las 5 grandes ligas) dice dos cosas:
+- **El modelo de goles no mejora al mercado.** Por eso su peso ha bajado a 0 %, y el radar confía en el consenso de casas.
+- **bet365 casi nunca paga por encima del precio justo** en las grandes ligas: solo en un ~1 % de las selecciones, y por poco.
+
+Por eso:
+- Habrá **pocas jugadas con valor** y muchos días sin avisos. Es lo esperado: el filtro está para eso.
+- Las ligas secundarias, el tenis y la NBA tienen más margen de error de bet365. Por eso se han añadido.
+- Mira la **ventaja frente al cierre** en la web. Si es positiva tras 100 o más jugadas, la ventaja es real.
+- **Pronósticos y combinadas de pronósticos no tienen ventaja.** Son informativos; apuesta poco o nada.
+- Juega solo con dinero que puedas perder. Si deja de ser divertido: jugarbien.es o la autoexclusión (RGIAJ).
 
 ## Puesta en marcha
 
-### 1. Claves gratuitas (10 minutos)
+### Claves (Secrets de GitHub)
+`Settings → Secrets and variables → Actions → New repository secret`:
 
-| Servicio | Para qué | Dónde |
+| Secret | Para qué | Dónde |
 |---|---|---|
-| The Odds API | Cuotas de bet365 y ~40 casas | https://the-odds-api.com → plan Starter |
-| Telegram | Avisos al móvil | Habla con **@BotFather** → `/newbot` → copia el token |
-| API-Football (opcional) | Lesiones y sanciones | https://dashboard.api-football.com. El plan gratis no incluye la temporada actual; el Pro sí, por unos 19 $/mes |
+| `ODDS_API_KEY` | Consenso del mercado | the-odds-api.com (gratis) |
+| `ODDSPAPI_KEY` | Cuotas de bet365 de tenis, NBA, NFL y copas | oddspapi.io (gratis) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Avisos | @BotFather |
 
-### 2. Probar en tu PC
+**Variables opcionales** (pestaña *Variables*):
+- `SPORTS`: por ejemplo `football,tennis` para seguir solo esos deportes.
+- `BANKROLL`, `MIN_EV`, `ALERT_EV` y `ALERT_MAX_DAY`.
 
+### En local
 ```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows  (en Mac/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-copy .env.example .env           # y rellena las claves
+python -m radar run          # análisis completo
+python -m radar backtest     # backtest de fútbol y tenis
+streamlit run app.py         # la web
+python -m pytest             # pruebas
 ```
-
-Escribe cualquier cosa a tu bot en Telegram y después:
-
-```bash
-python -m radar telegram-test    # muestra tu chat_id → ponlo en TELEGRAM_CHAT_ID y repite
-python -m radar backtest         # ¿habría ganado el último año? (1-2 min)
-python -m radar run              # primer análisis completo
-streamlit run app.py             # la web en http://localhost:8501
-```
-
-### 3. Dejarlo funcionando solo en internet (gratis)
-
-1. Crea un repositorio **privado** en GitHub y sube esta carpeta.
-2. En el repo, ve a **Settings → Secrets and variables → Actions → New repository secret** y crea `ODDS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` y, si lo tienes, `APIFOOTBALL_KEY`.
-   En la pestaña **Variables** puedes ajustar `BANKROLL`, `MIN_EV` y `ALERT_EV`.
-3. Ve a **Actions → Radar de apuestas → Run workflow** para la primera ejecución. A partir de ahí corre solo cada 3 horas y guarda la base de datos en el repo.
-4. **Web:** entra en https://share.streamlit.io con tu GitHub, haz **New app**, elige el repo y pon `app.py` como fichero principal. En los ajustes de la app, limita quién puede verla a tu email.
-   La web se actualiza sola con cada análisis.
-
-Uso de GitHub Actions: unos 2 minutos por ejecución × 8 al día ≈ 500 min/mes, dentro de los 2.000 gratis de un repo privado.
-
----
-
-## Ajustes útiles (`.env` o Variables de GitHub)
-
-| Variable | Por defecto | Qué hace |
-|---|---|---|
-| `BANKROLL` | 100 | Banca en €. Los stakes son un % de ella. |
-| `KELLY_FRACTION` | 0.25 | Agresividad del stake. 0.25 de Kelly es prudente. |
-| `MAX_STAKE_PCT` | 0.03 | Tope por apuesta: 3 % de la banca. |
-| `MIN_EV` / `ALERT_EV` | 0.04 / 0.06 | Valor mínimo para guardar / para avisar. |
-| `MIN_PROB` / `MAX_ODDS` | 0.25 / 6.0 | Evita marcar *longshots* poco fiables. |
-| `BET_BOOKS` | todas menos Pinnacle | Casas donde tienes cuenta. Con `bet365` todas las jugadas y combinadas serán en bet365; el resto de casas siguen sirviendo para calcular el precio justo. |
-| `ODDS_BOOKMAKERS` | — | Hasta 10 casas concretas por el coste de una región. |
-
-## Bajas a mano
-
-Edita `data/bajas_manual.csv`:
-
-```csv
-liga,equipo,jugador,importancia,hasta
-laliga,Real Madrid,Mbappé,3,2026-11-20
-premier,Arsenal,Saka,2,2026-11-15
-```
-
-- **Ligas:** laliga, premier, seriea, bundesliga, ligue1, champions.
-- **Equipo:** con el nombre que usa football-data (Ath Madrid, Man United, Paris SG…).
-- **Importancia:** 1 = rotación, 2 = titular, 3 = figura. Cada punto resta un 2 % de los goles esperados, con un máximo del 12 %.
-
-## Cuando quieras invertir
-
-En orden de impacto:
-
-1. **The Odds API de 30 $/mes:** cuotas casi en tiempo real, más mercados (ambos marcan, hándicap) y más ligas.
-2. **API-Football Pro, unos 19 $/mes:** lesiones, sanciones y alineaciones de la temporada actual. Se activa solo con poner la clave.
-3. Añadir xG (expected goals) al modelo y otros deportes (tenis con Elo, NBA).
 
 ## Estructura
-
 ```
 radar/
-  sources/football_data.py   histórico, cuotas de cierre, próxima jornada
-  sources/odds_api.py        cuotas en vivo + presupuesto de créditos
-  sources/injuries.py        bajas (API-Football + CSV manual)
-  model/dixon_coles.py       modelo de goles
-  model/markets.py           1X2, más/menos, ambos marcan, quitar margen
-  value.py                   detector de valor + stake
+  config.py                  deportes, ligas y ajustes
+  sources/football_data.py   fútbol: histórico + cuotas de bet365
+  sources/tennis_data.py     tenis: histórico con superficie y cuotas
+  sources/espn.py            NBA y NFL: resultados
+  sources/odds_api.py        consenso del mercado
+  sources/oddspapi.py        cuotas de bet365 (tenis, NBA, NFL, copas)
+  model/dixon_coles.py       fútbol
+  model/elo.py               tenis, NBA, NFL
+  value.py                   valor, riesgo, filtro élite
   combos.py                  combinadas por riesgo
-  learn.py                   liquidar, métricas, CLV, recalibrar
-  backtest.py                walk-forward
+  learn.py                   liquidar, métricas, recalibrar
   pipeline.py                orquestación
   notify.py                  Telegram
-app.py                       web (Streamlit)
-.github/workflows/radar.yml  ejecución automática cada 3 h
-tests/                       pruebas con una liga sintética (pytest)
+app.py                       web
 ```

@@ -67,7 +67,7 @@ def summarize(bt: pd.DataFrame, s: Settings) -> dict:
         weights[market] = float(grid[int(np.argmin(losses))])
         out[f"logloss_{market}"] = {"modelo": _ll(g["p_model"], g["won"]), "mercado": _ll(g["p_market"], g["won"]),
                                     "mejor_mezcla": float(min(losses)), "peso_modelo": weights[market]}
-    out["pesos"] = weights
+    out["pesos"] = {f"football|{k}": v for k, v in weights.items()}
     # Estrategia: apuestas con EV ≥ min_ev a la cuota de bet365, usando la mezcla óptima
     bt = bt.dropna(subset=["price"]).copy()
     bt["p"] = [weights[mk] * pm + (1 - weights[mk]) * pk for mk, pm, pk in zip(bt["market"], bt["p_model"], bt["p_market"])]
@@ -85,5 +85,49 @@ def summarize(bt: pd.DataFrame, s: Settings) -> dict:
                                          "cuota_media": float(b["price"].mean()), "roi": float(roi),
                                          "roi_ic95": [float(roi - 1.96 * se), float(roi + 1.96 * se)],
                                          "clv": float(clv) if pd.notna(clv) else None}
+    out["estrategia_bet365"] = strat
+    return out
+
+
+def tennis_backtest(hist: pd.DataFrame, s: Settings, test_days: int = 365) -> dict:
+    """Elo de tenis recorrido en orden (nunca ve el futuro). Compara con Pinnacle y simula apostar en bet365."""
+    from .model.elo import TennisElo
+
+    if hist.empty:
+        return {}
+    rec = TennisElo().fit(hist, record=True)
+    if rec is None or rec.empty:
+        return {}
+    rec = rec[rec["date"] >= rec["date"].max() - pd.Timedelta(days=test_days)]
+    ref_w = rec["ps_w"].fillna(rec["avg_w"])
+    ref_l = rec["ps_l"].fillna(rec["avg_l"])
+    rec = rec.assign(ref_w=ref_w, ref_l=ref_l).dropna(subset=["ref_w", "ref_l"])
+    rec = rec[rec["completed"]]
+    if rec.empty:
+        return {}
+    pm_w = (1 / rec["ref_w"]) / (1 / rec["ref_w"] + 1 / rec["ref_l"])
+    # cada partido visto desde los dos jugadores, para no sesgar (el ganador siempre gana)
+    pm = pd.concat([pm_w, 1 - pm_w], ignore_index=True)
+    pe = pd.concat([rec["p_w"], 1 - rec["p_w"]], ignore_index=True)
+    y = pd.Series([1] * len(rec) + [0] * len(rec))
+    price = pd.concat([rec["b365_w"], rec["b365_l"]], ignore_index=True)
+    grid = np.linspace(0, 1, 21)
+    losses = [_ll(w * pe + (1 - w) * pm, y) for w in grid]
+    w = float(grid[int(np.argmin(losses))])
+    out = {"n_partidos": len(rec), "desde": str(rec["date"].min().date()), "hasta": str(rec["date"].max().date()),
+           "logloss_ml": {"modelo": _ll(pe, y), "mercado": _ll(pm, y), "mejor_mezcla": float(min(losses)),
+                          "peso_modelo": w}, "pesos": {"tennis|ml": w}}
+    p = w * pe + (1 - w) * pm
+    d = pd.DataFrame({"p": p, "price": price, "won": y}).dropna()
+    strat = {}
+    for thr in (0.02, 0.03, 0.05, 0.08):
+        b = d[(d["p"] * d["price"] - 1 >= thr) & (d["p"] >= s.min_prob) & (d["price"] <= s.max_odds)]
+        if len(b) < 2:
+            continue
+        roi = ((b["price"] - 1) * b["won"] - (1 - b["won"])).mean()
+        se = (b["price"] * b["won"] - 1).std() / np.sqrt(len(b))
+        strat[f"ev_{int(thr * 100)}"] = {"apuestas": len(b), "acierto": float(b["won"].mean()),
+                                         "cuota_media": float(b["price"].mean()), "roi": float(roi),
+                                         "roi_ic95": [float(roi - 1.96 * se), float(roi + 1.96 * se)]}
     out["estrategia_bet365"] = strat
     return out

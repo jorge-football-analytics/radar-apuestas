@@ -1,6 +1,6 @@
 """Uso:
   python -m radar run            análisis completo + avisos (lo que ejecuta GitHub Actions cada 3 h)
-  python -m radar backtest       backtest walk-forward del último año y fija los pesos iniciales
+  python -m radar backtest       backtest de fútbol y tenis del último año (fija los pesos iniciales)
   python -m radar status         estado: créditos, último análisis, rendimiento
   python -m radar telegram-test  envía un mensaje de prueba y muestra tu chat_id
 """
@@ -26,12 +26,11 @@ def main(argv: list[str]) -> int:
 
         print(json.dumps(run(s), indent=2, ensure_ascii=False, default=str))
     elif cmd == "backtest":
-        from .pipeline import run_backtest
-        from .sources.football_data import load_history
+        from .pipeline import load_context, run_backtest
 
         db = DB(s.db_path)
-        hist = load_history(datetime.now(timezone.utc).date(), s.seasons_history)
-        print(json.dumps(run_backtest(s, db, hist), indent=2, ensure_ascii=False, default=str))
+        ctx = load_context(s, db, datetime.now(timezone.utc))
+        print(json.dumps(run_backtest(s, db, ctx), indent=2, ensure_ascii=False, default=str))
         db.set("backtest_date", datetime.now(timezone.utc).date().isoformat())
         db.close()
     elif cmd == "status":

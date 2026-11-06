@@ -81,3 +81,51 @@ def match_team(raw: str, known: list[str], cutoff: float = 0.72) -> str | None:
             return k
     best = difflib.get_close_matches(core, list(by_core), n=1, cutoff=cutoff)
     return by_core[best[0]] if best else (alias if alias else None)
+
+
+# ------------------------------------------------------------------ NBA / NFL
+US_FIX = {"la clippers": "clippers", "los angeles clippers": "clippers", "trail blazers": "blazers"}
+
+
+def us_key(name: str) -> str:
+    """En NBA y NFL el apodo (última palabra) es único: 'Los Angeles Lakers' → 'lakers'."""
+    n = norm(name)
+    for k, v in US_FIX.items():
+        if n.endswith(k):
+            return v
+    return n.split()[-1] if n else n
+
+
+def match_us(raw: str, known: list[str]) -> str | None:
+    k = us_key(raw)
+    for t in known:
+        if us_key(t) == k:
+            return t
+    return None
+
+
+# ------------------------------------------------------------------ tenis
+def player_key(name: str) -> str:
+    """Clave común para 'Carlos Alcaraz' (The Odds API / OddsPapi) y 'Alcaraz C.' (tennis-data):
+    último apellido + inicial del nombre → 'alcaraz c'."""
+    s = norm(name).replace("-", " ").replace(".", ". ").strip()
+    toks = s.split()
+    if not toks:
+        return ""
+    if toks[-1].endswith(".") or (len(toks[-1]) <= 2 and len(toks) > 1):
+        # formato tennis-data: 'De Minaur A.' / 'Cerundolo J.M.'
+        initials = [t for t in toks if t.endswith(".") or len(t.rstrip(".")) == 1]
+        surname = [t for t in toks if t not in initials]
+        first = initials[0].rstrip(".")[:1] if initials else ""
+        return f"{surname[-1] if surname else toks[0]} {first}".strip()
+    # formato 'Nombre Apellido(s)'
+    if len(toks) == 1:
+        return toks[0]
+    if "," in name:  # 'Alcaraz, Carlos'
+        last, first = [norm(x) for x in name.split(",", 1)]
+        return f"{last.split()[-1]} {first[:1]}"
+    return f"{toks[-1]} {toks[0][:1]}"
+
+
+def match_player(raw: str, known_by_key: dict[str, str]) -> str | None:
+    return known_by_key.get(player_key(raw))
