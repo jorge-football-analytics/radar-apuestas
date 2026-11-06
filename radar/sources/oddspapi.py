@@ -107,9 +107,12 @@ class OddsPapi:
             want = lambda t: tour in str(t.get("categoryName", "")).upper() and any(
                 w in norm(str(t.get("tournamentName", ""))) for w in words)
         else:
-            kw = (FOOTBALL.get(league) or OTHER.get(league) or {}).get("oddspapi", league)
-            want = lambda t: kw in norm(str(t.get("tournamentName", ""))) and "women" not in norm(
-                str(t.get("tournamentName", "")))
+            info = FOOTBALL.get(league) or OTHER.get(league) or {}
+            kw = info.get("oddspapi") or norm(info.get("nombre", league))
+            country = norm(info.get("country", ""))
+            want = lambda t: (kw in norm(str(t.get("tournamentName", ""))) or norm(str(t.get("tournamentName", ""))) in kw) \
+                and "women" not in norm(str(t.get("tournamentName", ""))) \
+                and (not country or country in norm(str(t.get("categoryName", ""))))
         return [t["tournamentId"] for t in tours if want(t) and t.get("futureFixtures", 1)][:2]
 
     def _fixtures(self, league: str, sport: str, now: datetime) -> list[dict]:

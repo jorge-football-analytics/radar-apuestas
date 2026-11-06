@@ -250,3 +250,68 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
     db = DB(s.db_path)
     assert db.df("SELECT count(*) n FROM picks WHERE won IS NULL")["n"].iloc[0] == 0
     db.close()
+
+
+def test_espn_odds_and_upcoming_parsing():
+    from radar.sources.espn import _american_to_decimal, _odds_rows
+
+    assert _american_to_decimal(-200) == 1.5 and _american_to_decimal("+150") == 2.5
+    comp = {"odds": [{"provider": {"name": "ESPN BET"}, "spread": -6.5, "overUnder": 221.5,
+                      "homeTeamOdds": {"moneyLine": -250, "spreadOdds": -110},
+                      "awayTeamOdds": {"moneyLine": 200, "spreadOdds": -110}}]}
+    rows = _odds_rows(comp, dict(sport="basketball", league="nba", kickoff="x", home="A", away="B", source="espn"))
+    got = {(r["market"], r["selection"], r["point"]): r["price"] for r in rows}
+    assert got[("ml", "H", 0.0)] == 1.4 and got[("spread", "H", -6.5)] == pytest.approx(1.909, abs=1e-3)
+    assert ("ou", "O", 221.5) in got
+
+
+def test_tennis_walk_and_canonical_order(tmp_path):
+    from radar.pipeline import Ctx, canonicalize
+    from radar.sources.espn import _walk_matches
+    from radar.db import DB
+
+    js = {"name": "Nitto ATP Finals", "groupings": [{"competitions": [
+        {"date": "2026-11-09T13:00Z", "status": {"type": {"state": "pre"}},
+         "competitors": [{"athlete": {"displayName": "Jannik Sinner"}}, {"athlete": {"displayName": "Carlos Alcaraz"}}]}]}]}
+    out = []
+    _walk_matches(js, out, "atp", "Nitto ATP Finals")
+    assert out and out[0]["p1"] == "Jannik Sinner" and out[0]["state"] == "pre"
+    db = DB(tmp_path / "x.db")
+    df = pd.DataFrame([dict(sport="tennis", league="tennis_atp_finals", kickoff="2026-11-09T13:00:00+00:00",
+                            home="Jannik Sinner", away="Carlos Alcaraz", source="the-odds-api", bookmaker="pinnacle",
+                            market="ml", selection="H", point=0.0, price=1.8)])
+    c = canonicalize(df, Ctx(), db)
+    assert c["home"].iloc[0] == "Carlos Alcaraz" and c["selection"].iloc[0] == "A"  # Sinner pasa a ser 'A'
+    assert c["match_id"].iloc[0].startswith("tennis|2026-11-09|")
+    db.close()
+
+
+def test_new_league_history_format(monkeypatch):
+    from radar.sources import football_data as fd
+
+    csv = ("Country,League,Season,Date,Time,Home,Away,HG,AG,Res,PSCH,PSCD,PSCA,B365CH,B365CD,B365CA\n"
+           "Argentina,Liga Profesional,2026,01/11/2026,20:00,Boca Juniors,River Plate,1,1,D,2.4,3.1,3.2,2.35,3.0,3.1\n")
+    monkeypatch.setattr(fd, "_get", lambda url, cache, max_age_h: csv.encode() if "ARG" in url else None)
+    h = fd.load_new_history(datetime(2026, 11, 6).date(), 4, ["argentina"])
+    assert len(h) == 1 and h["league"].iloc[0] == "argentina" and h["b365_H"].iloc[0] == 2.35
+
+
+def test_assistant_respects_deadline_and_risk():
+    from radar import assistant
+
+    now = datetime(2026, 11, 6, 12, tzinfo=timezone.utc)
+    rows = []
+    for i, (h, p, o) in enumerate([(2, 0.70, 1.50), (5, 0.66, 1.62), (30, 0.72, 1.55), (6, 0.48, 2.20), (8, 0.35, 3.10)]):
+        rows.append(dict(match_id=f"m{i}", sport="football", league="laliga",
+                         kickoff=(now + timedelta(hours=h)).isoformat(), home=f"H{i}", away=f"A{i}", label=f"Gana H{i}",
+                         odds=o, p_final=p, tier="valor", risk="bajo", verified=1, confidence="alta"))
+    pool = pd.DataFrame(rows)
+    deadline = now + timedelta(hours=12)
+    plan, alts, n = assistant.recommend(pool, 10, deadline, now, risk="bajo", tipo="simple")
+    assert n == 4  # el de dentro de 30 h queda fuera
+    assert plan.legs[0]["match_id"] in {"m0", "m1"}
+    combo, _, _ = assistant.recommend(pool, 10, deadline, now, risk="medio", tipo="combinada")
+    assert combo.tipo == "combinada" and 2.0 <= combo.odds <= 4.5
+    assert all(pd.Timestamp(l["ends"]) <= pd.Timestamp(deadline) for l in combo.legs)
+    rep, _, _ = assistant.recommend(pool, 10, deadline, now, tipo="repartir")
+    assert sum(rep.stakes) == pytest.approx(10, abs=0.05)

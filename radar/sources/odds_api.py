@@ -36,7 +36,7 @@ class OddsAPI:
     def allowance_now(self, now: datetime) -> int:
         """Créditos que podemos gastar hoy sin quedarnos sin crédito antes de fin de mes."""
         today = now.strftime("%Y-%m-%d")
-        spent = self.db.get(f"odds_spent_{today}", 0)
+        spent = self.db.get(f"oa_spent_{today}", 0)
         remaining = self.db.get("odds_api_remaining", 500) + spent - self.s.odds_reserve
         days_left = calendar.monthrange(now.year, now.month)[1] - now.day + 1
         return int(max(0, remaining / max(days_left, 1) - spent))
@@ -47,8 +47,9 @@ class OddsAPI:
         out = []
         if "football" in act:
             for k, v in FOOTBALL.items():
-                if v["fd"] is None or self.s.odds_api_football:
-                    out.append((k, v["odds"], ODDS_MARKETS["football"]))
+                cup = v["fd"] is None and not v.get("fdn")
+                if v.get("odds") and (cup or self.s.odds_api_football):
+                    out.append((k, v["odds"], "h2h" if cup else ODDS_MARKETS["football"]))
         for k, v in OTHER.items():
             if v["sport"] in act:
                 out.append((k, v["odds"], ODDS_MARKETS[v["sport"]]))
@@ -101,7 +102,7 @@ class OddsAPI:
             rows += parse_odds(data, league)
             self.db.set(f"odds_refresh_{league}", now.isoformat())
         today = now.strftime("%Y-%m-%d")
-        self.db.set(f"odds_spent_{today}", self.db.get(f"odds_spent_{today}", 0) + spent)
+        self.db.set(f"oa_spent_{today}", self.db.get(f"oa_spent_{today}", 0) + spent)
         return pd.DataFrame(rows)
 
     def fetch_scores(self, league: str) -> list[dict]:

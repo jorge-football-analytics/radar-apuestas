@@ -9,13 +9,23 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 
 | Deporte | Competiciones | Modelo propio | Cuota de bet365 |
 |---|---|---|---|
-| ⚽ Fútbol | LaLiga, Hypermotion, Premier, Championship, Serie A y B, Bundesliga 1 y 2, Ligue 1 y 2, Eredivisie, Portugal, Bélgica, Turquía, Grecia, Escocia | Dixon-Coles (goles) | football-data.co.uk (gratis, martes y viernes) |
+| ⚽ Fútbol | 37 ligas: España 1 y 2, Inglaterra 1 a 4, Italia, Alemania y Francia 1 y 2, Escocia 1 y 2, Países Bajos, Portugal, Bélgica, Turquía, Grecia, Argentina, Brasil, MLS, México, Japón, Austria, Suiza, Dinamarca, Polonia, Noruega, Suecia, Irlanda, Rumanía, China y Finlandia | Dixon-Coles (goles) | football-data.co.uk (gratis, martes y viernes) |
 | ⚽ Copas UEFA | Champions, Europa League, Conference | No (solo mercado) | OddsPapi |
 | 🎾 Tenis | Todos los torneos ATP y WTA activos | Elo general + por superficie | OddsPapi |
-| 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | Elo + puntos esperados | OddsPapi |
-| 🏈 NFL | Temporada regular y playoffs | Elo + puntos esperados | OddsPapi |
+| 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
+| 🏈 NFL | Temporada regular y playoffs | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
 
 **The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos.
+
+## La web
+
+- **Inicio:** las mejores jugadas, partidos por deporte y lo que empieza pronto.
+- **Asistente de apuesta:** le dices presupuesto, fecha y hora límite, riesgo y tipo (simple, combinada o repartir). Elige la mejor opción entre todas las selecciones con cuota de bet365 que terminan antes.
+- **Fútbol, Tenis, Baloncesto y NFL:** filtro por competición y riesgo, con tres pestañas:
+  - **Jugadas:** con valor, por confirmar y pronósticos.
+  - **Partidos:** probabilidades, cuotas de bet365 con su movimiento, cuota justa, goles o puntos esperados, Elo, cara a cara y todos los mercados.
+  - **Clasificación:** forma y fuerza del modelo; ranking Elo por superficie en tenis.
+- **Combinadas**, **Rendimiento** (curva, por competición y calibración) y **Estado y método** (cada fuente de datos en verde o rojo).
 
 ## Cómo decide
 

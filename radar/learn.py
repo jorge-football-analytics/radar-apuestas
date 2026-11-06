@@ -161,7 +161,7 @@ def metrics(db: DB, tier: str = "valor") -> dict:
         out["combos"] = {k: {"n": len(g), "acierto": float(g["won"].mean()), "roi": _roi(g)}
                          for k, g in combos.groupby("risk")}
     preds = db.df("SELECT p.*, m.sport FROM predictions p JOIN matches m ON m.id = p.match_id "
-                  "WHERE p.won IN (0, 1) AND p.p_model IS NOT NULL")
+                  "WHERE p.won IN (0, 1) AND p.p_model IS NOT NULL AND p.p_market IS NOT NULL")
     if len(preds) >= 30:
         out["calibration"] = {"n": len(preds), "logloss_modelo": _ll(preds["p_model"], preds["won"]),
                               "logloss_mercado": _ll(preds["p_market"], preds["won"]),
@@ -174,7 +174,7 @@ def recalibrate(db: DB, s: Settings, min_n: int = 150, prior_n: int = 300) -> di
     weights = {k: v for k, v in (db.get("weights", {}) or {}).items() if "|" in k}
     prior = {k: v for k, v in (db.get("weights_backtest", {}) or {}).items() if "|" in k}
     preds = db.df("SELECT p.*, m.sport FROM predictions p JOIN matches m ON m.id = p.match_id "
-                  "WHERE p.won IN (0, 1) AND p.p_model IS NOT NULL")
+                  "WHERE p.won IN (0, 1) AND p.p_model IS NOT NULL AND p.p_market IS NOT NULL")
     for (sport, market), g in preds.groupby(["sport", "market"]):
         key = f"{sport}|{market}"
         base = prior.get(key, DEFAULT_WEIGHT.get(sport, 0.2))

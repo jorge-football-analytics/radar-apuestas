@@ -141,3 +141,23 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
             best = max(pron, key=lambda c: (c.verified, c.ev + 0.05 * c.p_final))
             out[("pron",)] = best
     return list(out.values()), preds
+
+
+def model_only(match: dict, probs: dict, s: Settings, notes: list[str] | None = None) -> tuple[list[Candidate], list[dict]]:
+    """Partido sin cuotas todavía: pronóstico con la probabilidad del modelo y la cuota mínima a exigir en bet365."""
+    sport = match.get("sport") or sport_of(match["league"])
+    unit = SPORTS[sport]["unidad"]
+    preds = [dict(match_id=match["id"], market=m, selection=sel, point=pt, p_model=p, p_market=None, p_final=p)
+             for (m, sel, pt), p in probs.items()]
+    main = {k: v for k, v in probs.items() if k[0] in ("1x2", "ml")}
+    if not main:
+        return [], preds
+    (market, sel, point), p = max(main.items(), key=lambda kv: kv[1])
+    fair = 1 / p
+    reasons = [f"Aún no hay cuotas: probabilidad del modelo {p:.0%} → cuota justa {fair:.2f}",
+               f"Apuesta solo si {s.book} paga {(1 + s.min_ev) / p:.2f} o más"] + (notes or [])
+    c = Candidate(match["id"], sport, match["league"], match["kickoff"], match["home"], match["away"], market, sel,
+                  point, label(market, sel, point, match["home"], match["away"], unit), p, float("nan"), p,
+                  round(fair, 2), s.book, None, 0.0, 0.0, "modelo", " | ".join(reasons), 0, risk_of(p),
+                  "pronostico", 0, round((1 + s.min_ev) / p, 2), 0, 0.0)
+    return [c], preds

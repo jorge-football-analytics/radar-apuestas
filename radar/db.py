@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS combos (
 CREATE TABLE IF NOT EXISTS team_map (source TEXT, league TEXT, raw TEXT, canonical TEXT,
     PRIMARY KEY (source, league, raw));
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+-- Detalle del modelo por partido (goles/puntos esperados, Elo, superficie...) para la ficha del partido
+CREATE TABLE IF NOT EXISTS match_info (match_id TEXT PRIMARY KEY, info TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS runs (ts TEXT, step TEXT, detail TEXT);
 """
 

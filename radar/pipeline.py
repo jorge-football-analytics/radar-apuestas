@@ -1,6 +1,7 @@
 """Orquestación: datos → modelos → cuotas → bajas → evaluación con bet365 → verificación → combinadas → avisos → aprender."""
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ import pandas as pd
 from . import notify
 from .backtest import summarize, tennis_backtest, walk_forward
 from .combos import build_combos, legs_json
-from .config import FOOTBALL, OTHER, Settings, sport_of
+from .config import CUPS, FOOTBALL, OTHER, Settings, sport_of
 from .db import DB
 from .learn import metrics, recalibrate, settle
 from .model.dixon_coles import DCModel, fit, score_matrix
@@ -24,8 +25,9 @@ from .sources import tennis_data
 from .sources.injuries import absence_factor, fetch_api_football, load_manual
 from .sources.odds_api import OddsAPI
 from .sources.oddspapi import OddsPapi
-from .teams import match_player, match_team, match_us, player_key
-from .value import evaluate_match
+from . import tables
+from .teams import match_player, match_team, match_us, norm, player_key
+from .value import evaluate_match, model_only
 
 log = logging.getLogger("radar")
 TZ = ZoneInfo("Europe/Madrid")
@@ -42,6 +44,7 @@ class Ctx:
     tennis_keys: dict = field(default_factory=dict)
     us_hist: dict = field(default_factory=dict)
     us_elo: dict = field(default_factory=dict)
+    diag: dict = field(default_factory=dict)  # estado de cada fuente para la web
 
 
 # ------------------------------------------------------------------ datos y modelos
@@ -64,6 +67,9 @@ def load_context(s: Settings, db: DB, now: datetime) -> Ctx:
                     ctx.fb_models[league] = m
             recent = ctx.fb_hist[ctx.fb_hist["date"] >= pd.Timestamp(now).tz_convert(None) - pd.Timedelta(days=500)]
             ctx.fb_known = {lg: sorted(set(g["home"]) | set(g["away"])) for lg, g in recent.groupby("league")}
+        counts = ctx.fb_hist.groupby("league").size().to_dict() if not ctx.fb_hist.empty else {}
+        ctx.diag["football-data (histórico)"] = dict(ok=bool(counts), filas=int(sum(counts.values())),
+                                                     detalle=f"{len(counts)} ligas con histórico")
     if "tennis" in act:
         ctx.tennis_hist = tennis_data.load(now.date())
         if not ctx.tennis_hist.empty:
@@ -71,6 +77,9 @@ def load_context(s: Settings, db: DB, now: datetime) -> Ctx:
             ctx.tennis.fit(ctx.tennis_hist)
             ctx.tennis_keys = dict(ctx.tennis.names)
             log.info("Tenis: %d partidos, %d jugadores", len(ctx.tennis_hist), len(ctx.tennis_keys))
+        st = dict(tennis_data.STATUS)
+        ctx.diag["Tenis (histórico)"] = dict(ok=not ctx.tennis_hist.empty, filas=len(ctx.tennis_hist),
+                                             detalle=", ".join(f"{k}: {v}" for k, v in st.items()) or "sin datos")
     for league, v in OTHER.items():
         if v["sport"] in act and v.get("espn"):
             h = espn.load(league, v["espn"], now.date())
@@ -78,6 +87,7 @@ def load_context(s: Settings, db: DB, now: datetime) -> Ctx:
             if not h.empty:
                 ctx.us_elo[league] = TeamElo(league).fit(h)
                 log.info("%s: %d partidos", league, len(h))
+            ctx.diag[f"ESPN {v['nombre']} (histórico)"] = dict(ok=not h.empty, filas=len(h), detalle="")
     return ctx
 
 
@@ -141,10 +151,40 @@ def canonicalize(odds: pd.DataFrame, ctx: Ctx, db: DB) -> pd.DataFrame:
     for col in ("home", "away"):
         odds[col] = [canon(sp, lg, r, src) for sp, lg, r, src in zip(odds["sport"], odds["league"], odds[col],
                                                                      odds["source"])]
-    ko = pd.to_datetime(odds["kickoff"], utc=True)
+    ko = pd.to_datetime(odds["kickoff"], utc=True, format="ISO8601")
     odds["kickoff"] = ko.map(lambda t: t.isoformat())
-    odds["match_id"] = odds["league"] + "|" + ko.dt.strftime("%Y-%m-%d") + "|" + odds["home"] + "|" + odds["away"]
+    # Tenis: el orden de los jugadores cambia según la fuente → orden alfabético y se invierten las selecciones
+    ten = (odds["sport"] == "tennis") & (odds["home"] > odds["away"])
+    if ten.any():
+        odds.loc[ten, ["home", "away"]] = odds.loc[ten, ["away", "home"]].to_numpy()
+        if "selection" in odds:
+            odds.loc[ten, "selection"] = odds.loc[ten, "selection"].map({"H": "A", "A": "H"}).fillna(
+                odds.loc[ten, "selection"])
+    league_part = odds["league"].where(odds["sport"] != "tennis", "tennis")
+    odds["match_id"] = league_part + "|" + ko.dt.strftime("%Y-%m-%d") + "|" + odds["home"] + "|" + odds["away"]
     return odds
+
+
+def store_fixtures(db: DB, fx: pd.DataFrame) -> None:
+    """Partidos sin cuotas todavía (ESPN): se guardan para poder pronosticarlos con el modelo."""
+    if fx.empty:
+        return
+    with db.tx() as c:
+        for m in fx.drop_duplicates("match_id").itertuples():
+            c.execute("INSERT OR IGNORE INTO matches (id, league, kickoff, home, away, sport) VALUES (?,?,?,?,?,?)",
+                      (m.match_id, m.league, m.kickoff, m.home, m.away, m.sport))
+
+
+def save_tables(db: DB, ctx: Ctx) -> None:
+    """Clasificaciones y rankings para la web."""
+    for league, h in (ctx.fb_hist.groupby("league") if not ctx.fb_hist.empty else []):
+        db.set(f"tabla_{league}", tables.football_table(h, ctx.fb_models.get(league)))
+    for league, h in ctx.us_hist.items():
+        if league in ctx.us_elo:
+            db.set(f"tabla_{league}", tables.team_elo_table(h, ctx.us_elo[league]))
+    if ctx.tennis is not None:
+        for tour in ("atp", "wta"):
+            db.set(f"tabla_tennis_{tour}", tables.tennis_ranking(ctx.tennis_hist, ctx.tennis, tour))
 
 
 def store_odds(db: DB, odds: pd.DataFrame, now: datetime) -> None:
@@ -187,14 +227,14 @@ def model_for(m: dict, o: pd.DataFrame, ctx: Ctx, absences: dict, s: Settings, n
     if sport == "football":
         model = ctx.fb_models.get(league)
         if model is None:
-            return None, notes
+            return None, notes, {}
         r = model.rates(m["home"], m["away"])
         for t in (m["home"], m["away"]):
             seen = model.last_seen.get(t)
             if seen and (pd.Timestamp(now).tz_convert(None) - pd.Timestamp(seen)).days > 200:
-                return None, notes  # recién ascendido: sin datos recientes
+                return None, notes, {}  # recién ascendido: sin datos recientes
         if not r:
-            return None, notes
+            return None, notes, {}
         lam, mu = r
         fh = absence_factor(absences.get((league, m["home"]), []), s.injury_impact, s.injury_cap)
         fa = absence_factor(absences.get((league, m["away"]), []), s.injury_impact, s.injury_cap)
@@ -203,30 +243,44 @@ def model_for(m: dict, o: pd.DataFrame, ctx: Ctx, absences: dict, s: Settings, n
             if f < 1:
                 names = ", ".join(str(a["jugador"]) for a in absences[(league, team)][:5])
                 notes.append(f"Bajas {team}: {names} (−{1 - f:.0%} goles esperados)")
-        points = sorted(set(o.loc[o["market"] == "ou", "point"])) or [2.5]
+        points = sorted(set(o.loc[o["market"] == "ou", "point"])) or [1.5, 2.5, 3.5]
         notes.append(f"Goles esperados {lam:.2f} - {mu:.2f}")
-        return market_probs(score_matrix(lam, mu, model.rho), points), notes
+        mat = score_matrix(lam, mu, model.rho)
+        top = sorted(((mat[i, j], f"{i}-{j}") for i in range(6) for j in range(6)), reverse=True)[:5]
+        info = dict(tipo="goles", xg_local=lam, xg_visit=mu, marcadores=[[sc, float(p)] for p, sc in top],
+                    bajas_local=[a["jugador"] for a in absences.get((league, m["home"]), [])],
+                    bajas_visit=[a["jugador"] for a in absences.get((league, m["away"]), [])])
+        probs = market_probs(mat, points)
+        probs.update({k: v for k, v in market_probs(mat, [1.5, 2.5, 3.5]).items() if k not in probs})
+        return probs, notes, info
     if sport == "tennis" and ctx.tennis:
         surface = surface_of(league)
         res = ctx.tennis.predict(m["home"], m["away"], surface)
         if not res:
-            return None, notes
+            return None, notes, {}
         probs, info = res
         sup = {"Hard": "pista dura", "Clay": "tierra", "Grass": "hierba"}[surface]
         notes.append(f"Elo {info['elo_home']:.0f} vs {info['elo_away']:.0f} · superficie: {sup} · "
                      f"{info['partidos'][0]} y {info['partidos'][1]} partidos en la base")
-        return probs, notes
+        h2h = ctx.tennis_hist[((ctx.tennis_hist["winner"] == m["home"]) & (ctx.tennis_hist["loser"] == m["away"])) |
+                              ((ctx.tennis_hist["winner"] == m["away"]) & (ctx.tennis_hist["loser"] == m["home"]))]
+        info = dict(tipo="tenis", elo_local=info["elo_home"], elo_visit=info["elo_away"], superficie=sup,
+                    elo_sup_local=ctx.tennis.surf[(m["home"], surface)], elo_sup_visit=ctx.tennis.surf[(m["away"], surface)],
+                    h2h_local=int((h2h["winner"] == m["home"]).sum()), h2h_visit=int((h2h["winner"] == m["away"]).sum()))
+        return probs, notes, info
     if sport in ("basketball", "nfl") and league in ctx.us_elo:
         lines = {"spread": sorted(set(o.loc[o["market"] == "spread", "point"])),
                  "ou": sorted(set(o.loc[o["market"] == "ou", "point"]))}
         res = ctx.us_elo[league].predict(m["home"], m["away"], lines)
         if not res:
-            return None, notes
+            return None, notes, {}
         probs, info = res
         notes.append(f"Elo {info['elo_home']:.0f} vs {info['elo_away']:.0f} · margen esperado {info['margen']:+.1f} · "
                      f"total esperado {info['total']:.0f}")
-        return probs, notes
-    return None, notes
+        info = dict(tipo="puntos", elo_local=info["elo_home"], elo_visit=info["elo_away"], margen=info["margen"],
+                    total=info["total"])
+        return probs, notes, info
+    return None, notes, {}
 
 
 def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weights: dict):
@@ -235,21 +289,33 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
     all_odds = db.df("SELECT * FROM odds WHERE match_id IN (SELECT id FROM matches WHERE status='pendiente' "
                      "AND kickoff > ?)", (now.isoformat(),))
     candidates, preds, matches = [], [], {}
+    infos = {}
     for m in upcoming.to_dict("records"):
         m["sport"] = m.get("sport") or sport_of(m["league"])
         if m["sport"] not in s.active_sports:
             continue
         matches[m["id"]] = m
         o = all_odds[all_odds["match_id"] == m["id"]]
+        probs, notes, info = model_for(m, o, ctx, absences, s, now)
+        if info:
+            infos[m["id"]] = info
         if o.empty:
+            if probs:
+                cs, ps = model_only(m, probs, s, notes)
+                candidates += cs
+                preds += ps
             continue
-        probs, notes = model_for(m, o, ctx, absences, s, now)
         b365 = o[o["bookmaker"] == s.book]
         if not b365.empty and (b365["source"] == "football-data").all():
             notes.append("Cuota de bet365 tomada el martes/viernes: confírmala antes de apostar")
         cs, ps = evaluate_match(m, o, probs, weights, s, notes)
         candidates += cs
         preds += ps
+    if infos:
+        with db.tx() as c:
+            for mid, info in infos.items():
+                c.execute("INSERT OR REPLACE INTO match_info VALUES (?,?,?)", (mid, json.dumps(info, default=float),
+                                                                            now.isoformat()))
     return candidates, pd.DataFrame(preds), matches, all_odds
 
 
@@ -377,8 +443,7 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
 
     # 1) Resultados y aprendizaje
     api = OddsAPI(s, db)
-    no_source = [lg for lg in {*FOOTBALL, *OTHER} if (lg in FOOTBALL and not FOOTBALL[lg]["fd"]) or
-                 (lg in OTHER and not OTHER[lg].get("espn"))]
+    no_source = [lg for lg in {*CUPS, *OTHER} if lg in CUPS or not OTHER[lg].get("espn")]
     scores = []
     for lg in no_source:
         if not db.df("SELECT 1 FROM matches WHERE league=? AND status='pendiente' AND kickoff < ?",
@@ -388,17 +453,47 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     weights = recalibrate(db, s)
 
     # 2) Cuotas: football-data (bet365 gratis en fútbol) + The Odds API (consenso)
-    frames = []
+    frames, fixtures = [], []
     if "football" in s.active_sports:
-        frames.append(fd.load_fixtures())
-    frames.append(api.fetch(now))
+        f = fd.load_fixtures()
+        frames.append(f)
+        ctx.diag["football-data (cuotas bet365)"] = dict(ok=not f.empty, filas=len(f), detalle=(
+            f"{f['league'].nunique()} ligas, {f[['home', 'away']].drop_duplicates().shape[0]} partidos" if not f.empty
+            else "sin partidos próximos publicados (se actualiza martes y viernes por la tarde)"))
+    oa = api.fetch(now)
+    frames.append(oa)
+    ctx.diag["The Odds API (consenso)"] = dict(ok=api.enabled, filas=len(oa), detalle=(
+        f"{db.get('odds_api_remaining')} créditos restantes" if api.enabled else "sin clave ODDS_API_KEY"))
+    # ESPN: próximos partidos de NBA y NFL con hándicap y totales de referencia (gratis)
+    for league, v in OTHER.items():
+        if v["sport"] in s.active_sports and v.get("espn"):
+            up = espn.upcoming(league, v["espn"], v["sport"], now)
+            frames.append(up)
+            fx = up.attrs.get("fixtures", [])
+            fixtures += fx
+            ctx.diag[f"ESPN {v['nombre']} (próximos)"] = dict(ok=bool(fx), filas=len(fx), detalle=f"{len(up)} cuotas")
+    # ESPN: cuadro de los torneos de tenis en juego (partidos aún sin cuotas)
+    if "tennis" in s.active_sports:
+        n_t = 0
+        for tour in ("atp", "wta"):
+            for g in espn.tennis_scoreboard(tour):
+                if g.get("state") != "pre":
+                    continue
+                slug = "_".join(norm(g.get("tournament") or "torneo").split())[:40]
+                fixtures.append(dict(sport="tennis", league=f"tennis_{tour}_{slug}", kickoff=g["date"],
+                                     home=g["p1"], away=g["p2"], source="espn"))
+                n_t += 1
+        ctx.diag["ESPN tenis (cuadros)"] = dict(ok=n_t > 0, filas=n_t, detalle="partidos programados")
     frames = [f for f in frames if f is not None and not f.empty]
     n_odds = 0
     if frames:
         odds = canonicalize(pd.concat(frames, ignore_index=True), ctx, db)
-        odds = odds[pd.to_datetime(odds["kickoff"], utc=True) > now]
+        odds = odds[pd.to_datetime(odds["kickoff"], utc=True, format="ISO8601") > now]
         store_odds(db, odds, now)
         n_odds = len(odds)
+    if fixtures:
+        fx = canonicalize(pd.DataFrame(fixtures), ctx, db)
+        store_fixtures(db, fx[pd.to_datetime(fx["kickoff"], utc=True, format="ISO8601") > now])
 
     # 3) Análisis → verificación de bet365 en OddsPapi → nuevo análisis
     upcoming = db.df("SELECT * FROM matches WHERE status='pendiente' AND kickoff > ?", (ts,))
@@ -413,6 +508,7 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
                       (p["match_id"], p["market"], p["selection"], p["point"], p["p_model"], p["p_market"],
                        p["p_final"], ts))
     save_picks(db, candidates, ts, now)
+    save_tables(db, ctx)
 
     # 4) Combinadas (partidos de las próximas 36 h)
     soon = {k: v for k, v in matches.items() if pd.Timestamp(v["kickoff"]) < pd.Timestamp(now) + pd.Timedelta(hours=36)}
@@ -437,6 +533,11 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     # mantener la base de datos pequeña: cuotas de partidos terminados hace más de 30 días
     db.execute("DELETE FROM odds WHERE match_id IN (SELECT id FROM matches WHERE status != 'pendiente' AND kickoff < ?)",
                ((now - timedelta(days=30)).isoformat(),))
+    op = OddsPapi(s, db)
+    ctx.diag["OddsPapi (bet365)"] = dict(ok=op.enabled, filas=db.get(f"oddspapi_used_{now:%Y-%m}", 0), detalle=(
+        f"{db.get(f'oddspapi_used_{now:%Y-%m}', 0)} de {s.oddspapi_monthly} consultas este mes" if op.enabled
+        else "sin clave ODDSPAPI_KEY"))
+    db.set("fuentes", {"ts": ts, **ctx.diag})
     db.log(ts, "run", str(summary))
     db.set("last_run", ts)
     db.close()

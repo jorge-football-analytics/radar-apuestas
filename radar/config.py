@@ -44,6 +44,40 @@ FOOTBALL = {
     "turquia": {"nombre": "Süper Lig", "pais": "🇹🇷", "fd": "T1", "odds": "soccer_turkey_super_league", "apif": 203, "tier": 2},
     "grecia": {"nombre": "Super League", "pais": "🇬🇷", "fd": "G1", "odds": "soccer_greece_super_league", "apif": 197, "tier": 2},
     "escocia": {"nombre": "Premiership", "pais": "🏴", "fd": "SC0", "odds": "soccer_spl", "apif": 179, "tier": 2},
+    "leagueone": {"nombre": "League One", "pais": "🏴", "fd": "E2", "odds": "soccer_england_league1", "apif": 41, "tier": 3},
+    "leaguetwo": {"nombre": "League Two", "pais": "🏴", "fd": "E3", "odds": "soccer_england_league2", "apif": 42, "tier": 3},
+    "escocia2": {"nombre": "Championship escocesa", "pais": "🏴", "fd": "SC1", "odds": None, "apif": 180, "tier": 3},
+    # Ligas 'extra' de football-data (formato distinto: un fichero por país con todas las temporadas)
+    "argentina": {"nombre": "Liga Profesional", "pais": "🇦🇷", "fd": None, "fdn": "ARG", "country": "Argentina",
+                  "odds": "soccer_argentina_primera_division", "apif": 128, "tier": 2},
+    "brasil": {"nombre": "Brasileirão", "pais": "🇧🇷", "fd": None, "fdn": "BRA", "country": "Brazil",
+               "odds": "soccer_brazil_campeonato", "apif": 71, "tier": 2},
+    "mexico": {"nombre": "Liga MX", "pais": "🇲🇽", "fd": None, "fdn": "MEX", "country": "Mexico",
+               "odds": "soccer_mexico_ligamx", "apif": 262, "tier": 2},
+    "mls": {"nombre": "MLS", "pais": "🇺🇸", "fd": None, "fdn": "USA", "country": "USA", "odds": "soccer_usa_mls",
+            "apif": 253, "tier": 2},
+    "japon": {"nombre": "J1 League", "pais": "🇯🇵", "fd": None, "fdn": "JPN", "country": "Japan",
+              "odds": "soccer_japan_j_league", "apif": 98, "tier": 3},
+    "austria": {"nombre": "Bundesliga austriaca", "pais": "🇦🇹", "fd": None, "fdn": "AUT", "country": "Austria",
+                "odds": "soccer_austria_bundesliga", "apif": 218, "tier": 2},
+    "suiza": {"nombre": "Super League suiza", "pais": "🇨🇭", "fd": None, "fdn": "SWZ", "country": "Switzerland",
+              "odds": "soccer_switzerland_superleague", "apif": 207, "tier": 2},
+    "dinamarca": {"nombre": "Superliga danesa", "pais": "🇩🇰", "fd": None, "fdn": "DNK", "country": "Denmark",
+                  "odds": "soccer_denmark_superliga", "apif": 119, "tier": 2},
+    "polonia": {"nombre": "Ekstraklasa", "pais": "🇵🇱", "fd": None, "fdn": "POL", "country": "Poland",
+                "odds": "soccer_poland_ekstraklasa", "apif": 106, "tier": 3},
+    "noruega": {"nombre": "Eliteserien", "pais": "🇳🇴", "fd": None, "fdn": "NOR", "country": "Norway",
+                "odds": "soccer_norway_eliteserien", "apif": 103, "tier": 3},
+    "suecia": {"nombre": "Allsvenskan", "pais": "🇸🇪", "fd": None, "fdn": "SWE", "country": "Sweden",
+               "odds": "soccer_sweden_allsvenskan", "apif": 113, "tier": 3},
+    "irlanda": {"nombre": "Premier Division", "pais": "🇮🇪", "fd": None, "fdn": "IRL", "country": "Ireland",
+                "odds": "soccer_league_of_ireland", "apif": 357, "tier": 3},
+    "rumania": {"nombre": "Liga I", "pais": "🇷🇴", "fd": None, "fdn": "ROU", "country": "Romania", "odds": None,
+                "apif": 283, "tier": 3},
+    "china": {"nombre": "Superliga china", "pais": "🇨🇳", "fd": None, "fdn": "CHN", "country": "China",
+              "odds": "soccer_china_superleague", "apif": 169, "tier": 3},
+    "finlandia": {"nombre": "Veikkausliiga", "pais": "🇫🇮", "fd": None, "fdn": "FIN", "country": "Finland",
+                  "odds": "soccer_finland_veikkausliiga", "apif": 244, "tier": 3},
     # Competiciones europeas: sin histórico gratis → solo mercado
     "champions": {"nombre": "Champions League", "pais": "🇪🇺", "fd": None, "odds": "soccer_uefa_champs_league", "apif": 2, "tier": 1,
                   "oddspapi": "champions league"},
@@ -64,9 +98,15 @@ OTHER = {
 }
 
 # Mercados que se piden a The Odds API por deporte (cada mercado cuesta 1 crédito por región)
-ODDS_MARKETS = {"football": "h2h,totals", "basketball": "h2h,spreads,totals", "nfl": "h2h,spreads,totals", "tennis": "h2h"}
+# (NBA y NFL ya traen hándicap y totales gratis desde ESPN: aquí solo el ganador, 1 crédito)
+ODDS_MARKETS = {"football": "h2h,totals", "basketball": "h2h", "nfl": "h2h", "tennis": "h2h"}
+
+# Duración aproximada de un partido (para el asistente: cuándo se resuelve la apuesta)
+DURATION_MIN = {"football": 115, "tennis": 150, "basketball": 150, "nfl": 200}
 
 FD_TO_LEAGUE = {v["fd"]: k for k, v in FOOTBALL.items() if v["fd"]}
+COUNTRY_TO_LEAGUE = {v["country"]: k for k, v in FOOTBALL.items() if v.get("country")}
+CUPS = {k for k, v in FOOTBALL.items() if not v["fd"] and not v.get("fdn")}
 LEAGUES = FOOTBALL  # compatibilidad con código antiguo
 
 
@@ -88,7 +128,7 @@ def league_name(league: str) -> str:
     if league.startswith("tennis_"):
         parts = league.split("_")[1:]
         tour = parts[0].upper()
-        rest = " ".join(p.capitalize() for p in parts[1:])
+        rest = " ".join(p.capitalize() for p in parts[1:] if p.upper() != tour)
         return f"{tour} {rest}".replace("Us Open", "US Open")
     return league
 

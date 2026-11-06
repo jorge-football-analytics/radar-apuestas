@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from ..config import FD_TO_LEAGUE, LEAGUES, RAW_DIR, season_code
+from ..config import COUNTRY_TO_LEAGUE, FD_TO_LEAGUE, LEAGUES, RAW_DIR, season_code
 
 log = logging.getLogger(__name__)
 BASE = "https://www.football-data.co.uk"
@@ -72,10 +72,39 @@ def load_history(today: date, seasons: int, leagues: list[str] | None = None) ->
             df["league"] = key
             df["season"] = code
             frames.append(df)
-    if not frames:
-        return pd.DataFrame()
-    raw = pd.concat(frames, ignore_index=True)
-    return tidy_history(raw)
+    out = tidy_history(pd.concat(frames, ignore_index=True)) if frames else pd.DataFrame()
+    extra = load_new_history(today, seasons, leagues)
+    if not extra.empty:
+        out = pd.concat([out, extra], ignore_index=True).sort_values("date").reset_index(drop=True)
+    return out
+
+
+def load_new_history(today: date, seasons: int, leagues: list[str] | None = None) -> pd.DataFrame:
+    """Ligas 'extra' (Argentina, Brasil, MLS...): un CSV por país con cuotas de cierre de Pinnacle y bet365."""
+    frames = []
+    since = pd.Timestamp(today) - pd.Timedelta(days=365 * seasons)
+    for key, lg in LEAGUES.items():
+        code = lg.get("fdn")
+        if not code or (leagues is not None and key not in leagues):
+            continue
+        content = _get(f"{BASE}/new/{code}.csv", RAW_DIR / f"new_{code}.csv", max_age_h=6)
+        if not content:
+            continue
+        d = _read_csv(content)
+        if d.empty or "Home" not in d:
+            continue
+        d = d.rename(columns={"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"})
+        # en estas ligas solo hay cuotas de cierre: sirven como 'apertura' para el backtest
+        for pre in ("PS", "B365", "Avg", "Max"):
+            for sel in "HDA":
+                if f"{pre}C{sel}" in d and f"{pre}{sel}" not in d:
+                    d[f"{pre}{sel}"] = d[f"{pre}C{sel}"]
+        d = d.copy()
+        d["league"] = key
+        d["season"] = d.get("Season", "").astype(str)
+        t = tidy_history(d)
+        frames.append(t[t["date"] >= since])
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def tidy_history(raw: pd.DataFrame) -> pd.DataFrame:
@@ -107,17 +136,27 @@ def tidy_history(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_fixtures(cache_h: float = 3) -> pd.DataFrame:
-    """Próximos partidos con cuotas (se actualiza martes y viernes). Devuelve filas largas: una por casa/selección."""
+    """Próximos partidos con cuotas de bet365 y Pinnacle (se actualiza martes y viernes)."""
+    frames = []
     content = _get(f"{BASE}/fixtures.csv", RAW_DIR / "fixtures.csv", max_age_h=cache_h)
-    if not content:
-        return pd.DataFrame()
-    return tidy_fixtures(_read_csv(content))
+    if content:
+        frames.append(tidy_fixtures(_read_csv(content)))
+    content = _get(f"{BASE}/new_league_fixtures.csv", RAW_DIR / "new_league_fixtures.csv", max_age_h=cache_h)
+    if content:
+        raw = _read_csv(content)
+        if not raw.empty and "Country" in raw:
+            raw = raw.rename(columns={"Home": "HomeTeam", "Away": "AwayTeam"})
+            raw["Div"] = raw["Country"].map(lambda c: "NEW:" + str(c).strip())
+            frames.append(tidy_fixtures(raw))
+    frames = [f for f in frames if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def tidy_fixtures(raw: pd.DataFrame) -> pd.DataFrame:
     if raw.empty or "Div" not in raw:
         return pd.DataFrame()
-    raw = raw[raw["Div"].isin(FD_TO_LEAGUE)].copy()
+    div_map = {**FD_TO_LEAGUE, **{"NEW:" + c: k for c, k in COUNTRY_TO_LEAGUE.items()}}
+    raw = raw[raw["Div"].isin(div_map)].copy()
     raw["date"] = _parse_dates(raw)
     rows = []
     for _, r in raw.iterrows():
@@ -133,11 +172,11 @@ def tidy_fixtures(raw: pd.DataFrame) -> pd.DataFrame:
         if pd.isna(ko):
             continue
         ko_iso = ko.tz_convert("UTC").isoformat()
-        base = dict(sport="football", league=FD_TO_LEAGUE[r["Div"]], kickoff=ko_iso, home=str(r["HomeTeam"]).strip(),
+        base = dict(sport="football", league=div_map[r["Div"]], kickoff=ko_iso, home=str(r["HomeTeam"]).strip(),
                     away=str(r["AwayTeam"]).strip(), source="football-data")
         for pre, book in BOOK_PREFIX.items():
             for sel in "HDA":
-                v = pd.to_numeric(r.get(f"{pre}{sel}"), errors="coerce")
+                v = pd.to_numeric(r.get(f"{pre}{sel}", r.get(f"{pre}C{sel}")), errors="coerce")
                 if pd.notna(v) and v > 1:
                     rows.append({**base, "bookmaker": book, "market": "1x2", "selection": sel, "point": 0.0, "price": float(v)})
         for pre, book in OU_PREFIX.items():
