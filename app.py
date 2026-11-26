@@ -11,15 +11,47 @@ import json
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import importlib
+import pathlib
+import sys
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from radar import assistant, webdata
-from radar.config import FOOTBALL, OTHER, SPORTS, Settings, league_flag, league_name
-from radar.model.markets import label as mlabel
+import radar
+
+
+def _reload_radar() -> str:
+    """Streamlit Cloud reutiliza el mismo proceso de Python tras cada push: vuelve a ejecutar app.py, pero los módulos
+    ya importados (radar.assistant, radar.webdata...) siguen en memoria con el código ANTIGUO. Así salía
+    «module 'radar.assistant' has no attribute 'copilot'» aunque el repositorio estuviera bien. Si algún fichero de
+    radar/ ha cambiado desde la última carga, se recargan todos en orden de dependencias."""
+    root = pathlib.Path(radar.__file__).parent
+    sig = str(hash(tuple(sorted((str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in root.rglob("*.py")))))
+    if getattr(radar, "_code_sig", None) != sig:
+        order = ["radar.config", "radar.db", "radar.teams", "radar.model.dixon_coles", "radar.model.markets",
+                 "radar.model.derived", "radar.model.elo", "radar.stats", "radar.tables", "radar.learn", "radar.value",
+                 "radar.combos", "radar.assistant", "radar.webdata"]
+        # lo que ya estaba en memoria antes de esta comprobación lo cargó una ejecución anterior: puede ser antiguo
+        loaded_before = {n for n in order if n in sys.modules}
+        for name in order:
+            if name in loaded_before:
+                importlib.reload(sys.modules[name])
+            else:
+                importlib.import_module(name)
+        radar._code_sig = sig
+    return sig
+
+
+CODE_SIG = _reload_radar()
+
+from radar import assistant, webdata  # noqa: E402  (después de la recarga)
+from radar.combos import leg_report  # noqa: E402
+from radar.config import FOOTBALL, OTHER, SPORTS, Settings, league_flag, league_name  # noqa: E402
+from radar.model.markets import label as mlabel  # noqa: E402
 
 TZ = ZoneInfo("Europe/Madrid")
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
@@ -295,14 +327,31 @@ PLOT_CFG = {"displayModeBar": False, "responsive": True}
 
 # ======================================================================= datos (caché)
 @st.cache_data(ttl=180, show_spinner="Cargando el radar…")
-def get_data(path: str, mtime: float) -> dict:
+def get_data(path: str, mtime: float, code_sig: str) -> dict:
+    """code_sig: si cambia el código, la caché se invalida (los datos cacheados por la versión anterior pueden no
+    tener las mismas claves)."""
     return webdata.load_dashboard(path)
 
 
 if not s.db_path.exists():
     empty("Aún no hay análisis. Lanza el workflow en GitHub (Actions → Run workflow).")
     st.stop()
-D = get_data(str(s.db_path), s.db_path.stat().st_mtime)
+D = get_data(str(s.db_path), s.db_path.stat().st_mtime, CODE_SIG)
+MATCHES = {r["id"]: r for r in D["matches"].to_dict("records")} if not D["matches"].empty else {}
+
+
+def report_for(match_id: str, sport: str, market: str, selection: str, point: float, p: float, price, priced: bool,
+               n_books=None, n_sharp=None, derived: bool = False, stored=None) -> list[str]:
+    """Informe de scouting calculado al pintar (datos de match_info y clasificaciones del último análisis).
+    Si el partido ya no está en la lista de próximos, se usa el texto guardado."""
+    m = MATCHES.get(match_id)
+    if m is None:
+        return list(stored or [])
+    try:
+        return leg_report(m, sport, market, selection, float(point or 0), D["info"].get(match_id) or {}, D["tables"],
+                          float(p), float(price) if priced and price else None, priced, n_books, n_sharp, derived)
+    except Exception:  # noqa: BLE001  (nunca romper la página por un informe)
+        return list(stored or [])
 SINCE_DEFAULT = webdata.metrics_since_default()
 
 
@@ -350,7 +399,12 @@ def pick_card(r: dict) -> str:
                  f'<div class="cell{" val" if isnum(ev) and ev > 0 else ""}"><div class="k">Valor</div>'
                  f'<div class="o {sign_cls(ev)}">{pct(ev, True)}</div></div>'
                  f'<div class="cell"><div class="k">Stake €</div><div class="o">{num(stake) if stake else "—"}</div></div>')
-    reasons = "".join(f"<li>{e(x)}</li>" for x in str(r.get("reasons", "")).split(" | ") if x)
+    tech = "".join(f"<li>{e(x)}</li>" for x in str(r.get("reasons", "")).split(" | ") if x)
+    lines = report_for(r["match_id"], r["sport"], r["market"], r["selection"], r.get("point", 0), p,
+                       odds if r.get("verified") == 1 else None, r.get("verified") == 1, r.get("n_books"),
+                       None, False)
+    reasons = "".join(f"<li>{e(x)}</li>" for x in lines) + \
+        (f'<li><details><summary>Detalles técnicos</summary><ul>{tech}</ul></details></li>' if tech else "")
     return (f'<div class="pk t-{tier}{" off" if off else ""}"><div class="pk-h">{badges}'
             f'<span class="w">{when(r["kickoff"])}</span></div>'
             f'<div class="pk-lg">{sp["icono"]} {league_flag(r["league"])} {e(league_name(r["league"]))} · '
@@ -415,7 +469,9 @@ def combo_card(r: dict) -> str:
     items = []
     for l in legs:
         unpriced = l.get("priced") is False
-        why = "".join(f"<li>{e(str(w))}</li>" for w in (l.get("why") or []))
+        lines = report_for(l["match_id"], l.get("sport", "football"), l["market"], l["selection"], l.get("point", 0),
+                           l["p"], l.get("price"), not unpriced, stored=l.get("why"))
+        why = "".join(f"<li>{e(str(w))}</li>" for w in lines)
         items.append(
             f'<li><span>{SPORTS.get(l.get("sport", "football"), SPORTS["football"])["icono"]} <b>{e(l["label"])}</b>'
             f' <span class="lp">· {MK.get(l.get("market"), "")}</span>'
@@ -433,8 +489,9 @@ def combo_card(r: dict) -> str:
             f'<ul class="legs">{"".join(items)}</ul><div class="cells">'
             f'<div class="cell hl"><div class="k">Cuota</div><div class="o">{num(r["odds"])}</div></div>'
             f'<div class="cell"><div class="k">Prob.</div><div class="o">{pct(r["prob"], dec=1)}</div></div>'
-            f'<div class="cell{" val" if r["ev"] > 0 else ""}"><div class="k">{ev_lab}</div>'
-            f'<div class="o {sign_cls(r["ev"])}">{pct(r["ev"], True)}</div></div>'
+            f'<div class="cell{" val" if r["ev"] > 0 and r["tier"] != "verificar" else ""}"><div class="k">{ev_lab}</div>'
+            f'<div class="o {"" if r["tier"] == "verificar" else sign_cls(r["ev"])}">'
+            f'{"—" if r["tier"] == "verificar" else pct(r["ev"], True)}</div></div>'
             f'<div class="cell"><div class="k">Stake €</div><div class="o">{num(stake) if stake else "—"}</div></div>'
             f'</div><div class="pbar big"><i style="width:{min(r["prob"], 1) * 100:.1f}%"></i>'
             f'<u style="left:calc({min(implied, 1) * 100:.1f}% - 1px)"></u></div>'

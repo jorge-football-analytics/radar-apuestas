@@ -714,8 +714,10 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     soon = {k: v for k, v in matches.items() if pd.Timestamp(v["kickoff"]) < pd.Timestamp(now) + pd.Timedelta(hours=36)}
     infos = {r["match_id"]: json.loads(r["info"]) for r in db.conn.execute(
         "SELECT match_id, info FROM match_info WHERE updated=?", (ts,)).fetchall()}
-    combos = build_combos(preds[preds["match_id"].isin(soon)] if not preds.empty else preds, soon, s, infos) \
-        if soon else []
+    tables = {r["key"][6:]: json.loads(r["value"]) for r in db.conn.execute(
+        "SELECT key, value FROM kv WHERE key LIKE 'tabla_%'").fetchall()}
+    combos = build_combos(preds[preds["match_id"].isin(soon)] if not preds.empty else preds, soon, s, infos,
+                          tables=tables) if soon else []
     save_analysis(db, preds, matches, now)
     save_selections(db, preds, now)
     with db.tx() as c:

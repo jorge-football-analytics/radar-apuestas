@@ -179,13 +179,11 @@ def _es(txt: str) -> str:
 
 
 def _leg_why(r: dict) -> list[str]:
-    p, o = r["p_final"], r["odds"]
-    out = [_es(f"Probabilidad real {p:.0%} frente al {1 / o:.0%} que implica la cuota {o:.2f} → valor {r['ev']:+.1%}")]
-    if r.get("n_books") is not None and not pd.isna(r.get("n_books")):
-        out.append(f"Precio justo con {int(r['n_books'])} casas válidas y {int(r.get('n_sharp') or 0)} sharp"
-                   + (" (mercado derivado del 1X2/ganador)" if r.get("derived") else ""))
-    out += list(r.get("why") or [])[:3]
-    return out
+    """Informe de la selección (scouting + precio). Si la selección no lo trae, al menos el porqué de la cuota."""
+    if r.get("why"):
+        return list(r["why"])
+    from .stats import price_line
+    return [price_line(float(r["p_final"]), float(r["odds"]), True)]
 
 
 def copilot(pool: pd.DataFrame, bankroll: float, deadline: datetime, now: datetime, risk: str = "medio",
@@ -271,13 +269,16 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025,
     if not sel.empty:
         import json as _json
 
-        from .stats import why_lines
+        from .combos import leg_report
+        tables = {r["key"][6:]: _json.loads(r["value"]) for r in db.conn.execute(
+            "SELECT key, value FROM kv WHERE key LIKE 'tabla_%'").fetchall()}
         sel["risk"] = sel["p_final"].map(risk_of)
         sel["confidence"] = "—"
         sel["ev"] = sel["p_final"] * sel["odds"] - 1
-        sel["why"] = [why_lines(l, mk, sl, (_json.loads(i) if isinstance(i, str) else {}).get("stats") or {},
-                                SPORTS.get(sp, SPORTS["football"])["unidad"])
-                      for l, mk, sl, i, sp in zip(sel["label"], sel["market"], sel["selection"], sel["info"], sel["sport"])]
+        sel["why"] = [leg_report(r, r["sport"], r["market"], r["selection"], float(r["point"]),
+                                 _json.loads(r["info"]) if isinstance(r["info"], str) else {}, tables, float(r["p_final"]),
+                                 float(r["odds"]), True, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")))
+                      for r in sel.to_dict("records")]
         return sel.drop(columns=["info"])
     df = db.df("""SELECT p.match_id, p.market, p.selection, p.point, p.p_final, p.p_model, p.p_market,
                          o.price AS odds, o.first_price, o.fetched_at, m.sport, m.league, m.kickoff, m.home, m.away

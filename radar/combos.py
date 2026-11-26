@@ -25,7 +25,7 @@ from math import prod
 import pandas as pd
 
 from .config import SPORTS, Settings, sport_of
-from .stats import why_lines
+from .stats import price_line, scouting
 
 PROFILES = {
     # nombre: (patas, prob. mínima por pata, cuota total mínima, máxima, margen máximo por pata)
@@ -45,8 +45,27 @@ def _records(preds) -> list[dict]:
     return [c.as_row() if hasattr(c, "as_row") else dict(c) for c in preds]
 
 
-def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None) -> list[dict]:
-    """Selecciones candidatas a pata, con su porqué. priced=True si hay cuota de bet365 coherente y reciente."""
+def table_rows(tables: dict | None, league: str, home: str, away: str) -> dict:
+    """Fila de la clasificación de cada equipo (tablas que guarda el pipeline: tabla_<liga>)."""
+    t = (tables or {}).get(league) or []
+    by = {r.get("equipo"): r for r in t}
+    return {"local": by.get(home) or {}, "visit": by.get(away) or {}}
+
+
+def leg_report(m: dict, sport: str, market: str, selection: str, point: float, info: dict, tables: dict | None,
+               p: float, price: float | None, priced: bool, n_books=None, n_sharp=None, derived: bool = False
+               ) -> list[str]:
+    """Informe de una pata: scouting deportivo con datos reales + por qué merece (o no) la pena la cuota."""
+    st = (info or {}).get("stats") or {}
+    lines = scouting(st, m["home"], m["away"], sport, market, selection, point,
+                     table_rows(tables, m["league"], m["home"], m["away"]), info)
+    nb = int(n_books) if n_books is not None and not pd.isna(n_books) else None
+    ns = int(n_sharp) if n_sharp is not None and not pd.isna(n_sharp) else None
+    return lines + [price_line(p, price, priced, nb, ns, derived)]
+
+
+def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, tables: dict | None = None) -> list[dict]:
+    """Selecciones candidatas a pata, con su informe. priced=True si hay cuota de bet365 coherente y reciente."""
     infos = infos or {}
     out = []
     for r in _records(preds):
@@ -65,13 +84,9 @@ def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None) -> li
             continue
         ev = p * price - 1 if priced else 0.0
         sp = m.get("sport") or sport_of(m["league"])
-        st = (infos.get(r["match_id"]) or {}).get("stats") or {}
-        unit = SPORTS.get(sp, SPORTS["football"])["unidad"]
-        why = [f"Probabilidad real {p:.0%} frente al {1 / price:.0%} que implica la cuota"
-               + (f" · margen de bet365 {ev:+.1%}" if priced else " · falta la cuota de bet365"),
-               f"Referencia: {int(r.get('n_books') or 0)} casas válidas, {int(r.get('n_sharp') or 0)} sharp"
-               + (" · derivada del precio justo" if r.get("derived") else "")]
-        why += why_lines(r.get("label", ""), r["market"], r["selection"], st, unit)[:3]
+        info = infos.get(r["match_id"]) or {}
+        why = leg_report(m, sp, r["market"], r["selection"], float(r["point"]), info, tables, float(p),
+                         price if priced else None, priced, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")))
         out.append(dict(match_id=r["match_id"], sport=sp, league=m["league"], kickoff=m["kickoff"],
                         partido=f"{m['home']} - {m['away']}", market=r["market"], selection=r["selection"],
                         point=float(r["point"]), label=r.get("label") or r["selection"], p=float(p), price=price,
@@ -119,8 +134,8 @@ def _tier(combo, ev: float, s: Settings) -> str:
 
 
 def build_combos(preds, matches: dict[str, dict], s: Settings, infos: dict | None = None, per_profile: int = 2,
-                 pool_size: int = 14) -> list[dict]:
-    legs = leg_pool(preds, matches, s, infos)
+                 pool_size: int = 14, tables: dict | None = None) -> list[dict]:
+    legs = leg_pool(preds, matches, s, infos, tables)
     out = []
     for profile, ((kmin, kmax), pmin, omin, omax, margin_min) in PROFILES.items():
         if profile == "valor":
@@ -166,4 +181,4 @@ def legs_json(c: dict) -> str:
     return json.dumps(c["legs"], ensure_ascii=False, default=float)
 
 
-__all__ = ["build_combos", "leg_pool", "legs_json", "PROFILES", "MK_NAME"]
+__all__ = ["build_combos", "leg_pool", "leg_report", "legs_json", "table_rows", "PROFILES", "MK_NAME"]

@@ -90,6 +90,17 @@ Por eso:
 - `BANKROLL`, `MIN_EV`, `ALERT_EV` y `ALERT_MAX_DAY`.
 - `MIN_ODDS` / `MAX_ODDS` (1,30 / 2,60), `SOLID_MIN_PROB` (0,65) y `SOLID_MIN_EV` (−0,005).
 
+### Si Streamlit Cloud muestra `AttributeError: module 'radar...' has no attribute ...`
+Tras un push, Streamlit vuelve a ejecutar `app.py` pero conserva en memoria los módulos de `radar/` que ya había importado
+(con el código antiguo). `app.py` ya los recarga solo cuando cambian; si alguna vez vuelve a pasar: *Manage app → ⋮ →
+Reboot app*.
+
+### Comprobar las 7 páginas sin servidor
+```bash
+python tools/check_pages.py data/radar.db          # OK/FALLO por página; código 1 si alguna falla
+STUB_OVERRIDES='{"m_sp":"basketball","pf_tier":"combinadas"}' python tools/check_pages.py
+```
+
 ### En local
 ```bash
 pip install -r requirements.txt
