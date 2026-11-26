@@ -234,7 +234,7 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
     db = DB(s.db_path)
     picks = db.df("SELECT * FROM picks")
     assert set(picks["bookmaker"]) == {"bet365"}
-    assert set(picks["tier"]) <= {"valor", "verificar", "pronostico", "revisar", "solida"}
+    assert set(picks["tier"]) <= {"valor", "verificar", "pronostico", "revisar", "solida", "moderado", "cuota_alta"}
     assert (picks["tier"] == "valor").any()
     nba = picks[picks["sport"] == "basketball"]
     assert not nba.empty and nba["verified"].eq(1).all(), "OddsPapi debería haber confirmado bet365"

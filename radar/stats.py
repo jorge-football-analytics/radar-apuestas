@@ -3,6 +3,8 @@ visitante, goles o puntos a favor y en contra, y cara a cara. Trabaja sobre cual
 date, home, away, hg, ag (fútbol, NBA, NFL y tenis con ganador=home)."""
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 
@@ -121,7 +123,7 @@ def scouting(st: dict, home: str, away: str, sport: str, market: str, selection:
                    f"({vis['forma']}).")
     # casa / fuera
     lr, vr = loc.get("local") or {}, vis.get("visitante") or {}
-    if lr.get("pj") and vr.get("pj"):
+    if lr.get("pj") and vr.get("pj") and all(k in d for d in (lr, vr) for k in ("gf", "ga")):
         # estadísticas guardadas por la versión anterior (ventana fija de 300 días): no decir «esta temporada»
         when = "esta temporada" if "temporada" in loc else "en los últimos meses"
         out.append(f"En casa {home} va {_rec(lr, draws)} {when} ({_num(lr['gf'])} {unit} a favor y "
@@ -163,11 +165,28 @@ def scouting(st: dict, home: str, away: str, sport: str, market: str, selection:
     # cara a cara
     if h2h.get("partidos"):
         last = h2h["partidos"][-1]
-        out.append(f"Cara a cara (últimos {len(h2h['partidos'])}): {h2h['v_local']} victorias de {home}"
-                   + (f", {h2h['empates']} empates" if draws else "") + f" y {h2h['v_visit']} de {away}; "
+        n_h = len(h2h["partidos"])
+        vl, em = h2h["v_local"], h2h.get("empates", 0)
+        out.append(f"Cara a cara ({'último partido' if n_h == 1 else f'últimos {n_h}'}): {vl} "
+                   f"{'victoria' if vl == 1 else 'victorias'} de {home}"
+                   + (f", {em} {'empate' if em == 1 else 'empates'}" if draws else "") + f" y {h2h['v_visit']} de {away}; "
                    f"el último, {last['marcador']} ({last['fecha'][:7]}).")
-    if not out:
-        out.append("Sin histórico propio de estos equipos en nuestras fuentes (competición europea, jugador nuevo o "
+    # bajas y lesiones (solo lo que devuelve la fuente; si no hay fuente, se dice)
+    b = info.get("bajas")
+    if isinstance(b, dict):
+        def fmt(lst):
+            if not lst:
+                return "sin bajas confirmadas"
+            items = [f"{a.get('jugador')} ({a.get('tipo') or 'baja'}{': ' + a['motivo'] if a.get('motivo') else ''})"
+                     for a in lst[:4]]
+            return ", ".join(items) + (f" y {len(lst) - 4} más" if len(lst) > 4 else "")
+        if b.get("fuente") or b.get("local") or b.get("visit"):
+            out.append(f"Bajas ({b.get('fuente') or 'apuntadas a mano'}): {home}: {fmt(b.get('local'))}; "
+                       f"{away}: {fmt(b.get('visit'))}.")
+        else:
+            out.append(f"Bajas: sin datos para este partido: {b.get('nota') or 'sin fuente'}.")
+    if not out or all(x.startswith("Bajas") for x in out):
+        out.insert(0, "Sin histórico propio de estos equipos en nuestras fuentes (competición europea, jugador nuevo o "
                    "liga sin datos): la probabilidad sale solo del mercado sin margen.")
     return out
 
@@ -184,7 +203,7 @@ def price_line(p: float, price: float | None, priced: bool, n_books: int | None 
                if n_sharp else f" Precio justo calculado con {n_books} casa{'s' if n_books > 1 else ''} sin margen")
         ref += " (mercado derivado del 1X2/ganador)." if derived else "."
     if not priced or not price:
-        return (f"Aún no hay cuota fiable de bet365: solo merece la pena si paga {_num(fair, 2)} o más "
+        return (f"Aún no hay cuota fiable de bet365: solo merece la pena si paga {_num(math.ceil(100 * fair - 1e-9) / 100, 2)} o más "
                 f"(probabilidad real del {p:.0%}).{ref}")
     ev = p * price - 1
     if ev > 0.005:

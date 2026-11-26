@@ -23,10 +23,10 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 
 Terminal oscura de análisis (Streamlit), pensada para PC y móvil:
 - **Radar de la jornada:** todos los partidos analizados con su selección más interesante, probabilidad real frente a la que implica la cuota de bet365, valor esperado, semáforo (verde, ámbar, rojo, gris) y recomendación. Nunca queda vacía aunque no haya avisos.
-- **Jugadas:** Élite, Sólidas, Por confirmar y Revisar, con barra de probabilidad, cuota justa y stake.
+- **Jugadas:** los 4 niveles (💎 Élite, 🛡️ Sólidas, ⚖️ Valor moderado, 🔥 Cuota alta) más Por confirmar y Revisar, con velocímetro de confianza (0-100), barra de probabilidad, cuota justa, stake y calculadora de stake/beneficio.
 - **Combinadas:** tres perfiles cada jornada (Segura 1,70-2,20 · Equilibrada 2,50-4,00 · Valor EV+ cuando hay ventaja), de cualquier mercado, una pata por partido, con el porqué de cada selección y la probabilidad real conjunta frente a la cuota total.
 - **Partidos:** fichas con forma (V-E-D), racha, rendimiento local/visitante, cara a cara y todos los mercados. Clasificaciones con puntos en casa y fuera y racha; ranking Elo por superficie en tenis.
-- **Asistente de apuesta (copiloto):** banca, riesgo, deportes, cuota objetivo y fecha límite. Construye la mejor simple o combinada con stake (Kelly fraccionado si hay ventaja; si no, como mucho un 0,5 %) y el porqué: probabilidad real frente a la cuota, referencia de mercado, forma, rachas, local/visitante y cara a cara.
+- **Asistente de apuesta (copiloto):** banca, riesgo, deportes, cuota objetivo y fecha límite. El riesgo fija el rango de cuota (bajo 1,40-1,90 · medio 1,90-2,80 · alto 2,80-5,00) y el deslizador lo afina; **el rango se respeta siempre**. Orden de preferencia: cuotas de bet365 confirmadas con valor ≥ 0 → selecciones «por confirmar» con la cuota mínima a la que cogerlas → si nada encaja, lo dice y enseña la alternativa más cercana (nunca una apuesta con valor negativo como opción principal). Devuelve 3 planes: opción principal, una más conservadora y otra de mayor retorno, con stake (Kelly fraccionado si hay ventaja; 0,5 % a precio justo; 0 si el valor es negativo) y el porqué de cada selección.
 - **Rendimiento:** curva de banca y yield (Plotly), caída máxima, CLV, desglose por deporte, mercado, rango de cuota, competición y nivel, y calibración. Respeta `METRICS_SINCE`.
 - **Estado y método:** fuentes en verde o rojo, consultas gastadas, pesos y backtest.
 
@@ -42,6 +42,8 @@ Los datos se leen en `radar/webdata.py` (funciones probadas) y se cachean con `@
 |---|---|---|
 | 💎 **Élite** | Cuota de bet365 confirmada (menos de 24 h) con valor ≥ +2,5 % sobre el precio justo limpio, cuota 1,30-2,60. Si además hay referencia sharp (Pinnacle o exchange) y el valor es ≥ +3 %, va a Telegram (máx. 5 al día) | Web y Telegram |
 | 🟢 **Sólida** | Probabilidad real ≥ 65 % y bet365 paga al menos el precio justo (valor ≥ −0,5 %), cuota 1,30-2,60. No es ventaja: es no regalar margen. Base de las combinadas | Web |
+| ⚖️ **Valor moderado** | Cuota confirmada con valor entre 0 y +2,5 % y probabilidad ≥ 40 %, cuota 1,30-2,60. Ventaja pequeña: stake pequeño | Web |
+| 🔥 **Cuota alta** | Cuota 2,40-3,80 con valor ≥ +1 % y probabilidad ≥ 25 %. Más varianza: stake Kelly reducido | Web |
 | **Por confirmar** | El mercado sugiere valor, pero falta la cuota de bet365 o es vieja. Se indica la cuota mínima | Web |
 | **Revisar** | Valor > +15 %: casi siempre es un error de datos. Apuesta 0 | Web |
 | **Sin ventaja** | Lo más probable del partido aunque bet365 cobre margen. Información, no recomendación | Radar |
@@ -89,6 +91,10 @@ Por eso:
 - `SPORTS`: por ejemplo `football,tennis` para seguir solo esos deportes.
 - `BANKROLL`, `MIN_EV`, `ALERT_EV` y `ALERT_MAX_DAY`.
 - `MIN_ODDS` / `MAX_ODDS` (1,30 / 2,60), `SOLID_MIN_PROB` (0,65) y `SOLID_MIN_EV` (−0,005).
+- `MODERATE_MIN_PROB` (0,40), `HIGH_ODDS_MIN` / `HIGH_ODDS_MAX` (2,40 / 3,80) y `HIGH_MIN_EV` (0,01).
+
+### Bajas y lesiones
+El informe de cada partido muestra las bajas confirmadas: **API-Football** en fútbol (una consulta por día de partidos, con caché de 6 h; el plan gratis da 100 al día) y el parte de lesiones de **ESPN** en NBA y NFL. Para activarlo en fútbol añade el secreto `APIFOOTBALL_KEY` en GitHub → *Settings → Secrets and variables → Actions*. Si falta la clave, o tu plan no cubre la temporada actual, el informe lo dice («sin datos para este partido») en vez de inventar.
 
 ### Si Streamlit Cloud muestra `AttributeError: module 'radar...' has no attribute ...`
 Tras un push, Streamlit vuelve a ejecutar `app.py` pero conserva en memoria los módulos de `radar/` que ya había importado
@@ -98,6 +104,7 @@ Reboot app*.
 ### Comprobar las 7 páginas sin servidor
 ```bash
 python tools/check_pages.py data/radar.db          # OK/FALLO por página; código 1 si alguna falla
+python tools/check_assistant.py data/radar.db      # 162 combinaciones de riesgo/cuota/tipo/fecha: el asistente respeta el filtro
 STUB_OVERRIDES='{"m_sp":"basketball","pf_tier":"combinadas"}' python tools/check_pages.py
 ```
 

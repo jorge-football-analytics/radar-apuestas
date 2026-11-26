@@ -59,9 +59,12 @@ DIAS_C = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 MK = {"1x2": "Resultado", "ml": "Ganador", "ou": "Más/menos", "spread": "Hándicap", "btts": "Ambos marcan",
       "dc": "Doble oportunidad", "combinada": "Combinada"}
 TIER = {  # nivel → (texto del badge, clase css)
-    "valor": ("Élite", "b-elite"), "solida": ("Sólida", "b-solid"), "verificar": ("Por confirmar", "b-check"),
+    "valor": ("💎 Élite", "b-elite"), "solida": ("🛡️ Sólida", "b-solid"), "moderado": ("⚖️ Moderado", "b-mod"),
+    "cuota_alta": ("🔥 Cuota alta", "b-high"), "verificar": ("Por confirmar", "b-check"),
     "revisar": ("Revisar", "b-review"), "pronostico": ("Sin ventaja", "b-none"), "modelo": ("Sin cuotas", "b-none"),
     "sin_datos": ("Sin datos", "b-none")}
+TAB_NAME = {"valor": "💎 Élite", "solida": "🛡️ Sólidas", "moderado": "⚖️ Valor moderado", "cuota_alta": "🔥 Cuota alta",
+            "verificar": "Por confirmar", "revisar": "Revisar"}
 LIGHT = {"verde": "Recomendable", "ambar": "Con reservas", "rojo": "No apostar", "gris": "Sin datos fiables"}
 COMBO_NAME = {"segura": "Segura", "equilibrada": "Equilibrada", "valor": "Valor EV+", "conservadora": "Conservadora",
               "arriesgada": "Arriesgada"}
@@ -123,6 +126,9 @@ text-transform:uppercase;padding:.16rem .5rem;border-radius:4px;border:1px solid
 .b-elite{background:var(--amber);color:#1A1200}.b-solid{background:rgba(43,212,125,.14);color:var(--green);border-color:rgba(43,212,125,.45)}
 .b-check{color:var(--cyan);border-color:rgba(59,201,245,.55)}.b-review{color:var(--red);border-color:rgba(255,92,92,.6)}
 .b-none{color:var(--mute);border-color:var(--line2)}.b-tg{background:rgba(167,139,250,.15);color:var(--violet)}
+.b-mod{background:rgba(59,201,245,.12);color:var(--cyan);border-color:rgba(59,201,245,.4)}
+.b-high{background:rgba(255,120,60,.14);color:#FF8A4C;border-color:rgba(255,120,60,.5)}
+.b-warn{background:rgba(255,92,92,.12);color:var(--red);border-color:rgba(255,92,92,.5)}
 .b-risk{color:var(--text);border-color:var(--line2)}
 /* semáforo */
 .lt{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none}
@@ -156,6 +162,15 @@ text-transform:uppercase;color:var(--dim);padding:.35rem .85rem}
 .pk{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.85rem .95rem;position:relative}
 .pk.t-valor{border-color:rgba(255,176,32,.55);background:linear-gradient(180deg,rgba(255,176,32,.06),var(--panel) 40%)}
 .pk.t-solida{border-color:rgba(43,212,125,.35)}
+.pk.t-moderado{border-color:rgba(59,201,245,.35)}.pk.t-cuota_alta{border-color:rgba(255,120,60,.45)}
+.pk{transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
+.pk:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.gauge{display:inline-flex;flex-direction:column;align-items:center;margin-left:auto;line-height:1}
+.gauge svg{display:block}.gauge span{font-family:var(--mono);font-size:.56rem;color:var(--mute);letter-spacing:.06em;
+text-transform:uppercase;margin-top:1px}
+.pay{font-family:var(--mono);font-size:.72rem;color:var(--mute);margin-top:.35rem}.pay b{color:var(--text)}
+.warnbox{background:rgba(255,92,92,.08);border:1px solid rgba(255,92,92,.45);border-radius:10px;padding:.7rem .9rem;
+color:var(--text);font-size:.86rem;margin-bottom:.7rem}
 .pk.off{opacity:.62}
 .pk-h{display:flex;gap:.35rem;align-items:center;flex-wrap:wrap}.pk-h .w{margin-left:auto;color:var(--mute);font-size:.74rem;font-family:var(--mono)}
 .pk-lg{color:var(--mute);font-size:.76rem;margin-top:.45rem}
@@ -210,11 +225,13 @@ font-size:.58rem;line-height:15px;text-align:center;color:#06080C;font-weight:70
 /* asistente */
 .plan{background:var(--panel);border:1px solid rgba(255,176,32,.5);border-radius:12px;padding:1rem 1.1rem}
 .plan h4{font-size:1.15rem;margin:0 0 .2rem;font-weight:600}
-.plan .big{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:.8rem 0}
-.plan .big div{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.55rem .7rem}
-.plan .big b{display:block;font-family:var(--mono);font-size:1.35rem;font-weight:600;line-height:1.15}
-.plan .big span{color:var(--mute);font-size:.74rem}
+.plan .big,.alt .big{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:.8rem 0}
+.plan .big div,.alt .big div{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.55rem .7rem}
+.plan .big b,.alt .big b{display:block;font-family:var(--mono);font-size:1.35rem;font-weight:600;line-height:1.15}
+.plan .big span,.alt .big span{color:var(--mute);font-size:.74rem}
 .alt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.8rem 1rem;margin-top:.7rem}
+.alt h4{font-size:1rem;margin:0 0 .2rem;font-weight:600}
+.alt .big b{font-size:1.1rem}
 /* streamlit */
 [data-testid="stTabs"] button p{font-family:var(--mono);font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 [data-testid="stTabs"] [aria-selected="true"] p{color:var(--amber)}
@@ -264,6 +281,57 @@ def day_title(d) -> str:
     if d == today + timedelta(days=1):
         return "Mañana"
     return f"{DIAS[d.weekday()].capitalize()} {d:%d/%m}"
+
+
+def when_nat(iso: str) -> str:
+    """Fecha en lenguaje natural: «hoy a las 21:00», «mañana a las 01:55», «el sábado 28/11 a las 18:00»."""
+    d = loc(iso)
+    today = datetime.now(TZ).date()
+    if d.date() == today:
+        return f"hoy a las {d:%H:%M}"
+    if d.date() == today + timedelta(days=1):
+        return f"mañana a las {d:%H:%M}"
+    return f"el {DIAS[d.weekday()]} {d:%d/%m} a las {d:%H:%M}"
+
+
+def gauge(score: int, label: str = "confianza") -> str:
+    """Velocímetro semicircular 0-100 (SVG en línea)."""
+    import math
+    sc = max(0, min(100, int(score)))
+    ang = math.pi * (1 - sc / 100)
+    x, y = 30 + 22 * math.cos(ang), 30 - 22 * math.sin(ang)
+    col = "#2BD47D" if sc >= 65 else "#FFB020" if sc >= 40 else "#FF5C5C"
+    big = 1 if sc > 50 else 0
+    arc = f"M8,30 A22,22 0 {big},1 {x:.1f},{y:.1f}" if sc > 0 else ""
+    return (f'<span class="gauge" title="Confianza en la estimación: {sc}/100"><svg width="60" height="36" viewBox="0 0 60 36">'
+            f'<path d="M8,30 A22,22 0 0,1 52,30" fill="none" stroke="#1C2633" stroke-width="5" stroke-linecap="round"/>'
+            + (f'<path d="{arc}" fill="none" stroke="{col}" stroke-width="5" stroke-linecap="round"/>' if arc else "")
+            + f'<line x1="30" y1="30" x2="{x:.1f}" y2="{y:.1f}" stroke="#E6EDF3" stroke-width="1.6"/>'
+            f'<circle cx="30" cy="30" r="2.4" fill="#E6EDF3"/>'
+            f'<text x="30" y="24" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#E6EDF3">{sc}</text>'
+            f'</svg><span>{label}</span></span>')
+
+
+def stake_calculator(options: list[dict], key: str):
+    """Calculadora interactiva: elige una jugada o combinada y un importe → cobro, beneficio, valor esperado y stake
+    sugerido para tu banca (Kelly fraccionado si hay ventaja)."""
+    if not options:
+        return
+    with st.expander("🧮 Calculadora de stake y beneficio", expanded=False):
+        c1, c2, c3 = st.columns([2.4, 1, 1])
+        i = c1.selectbox("Apuesta", list(range(len(options))), format_func=lambda k: options[k]["name"], key=f"{key}_sel")
+        stake = c2.number_input("Importe (€)", min_value=0.5, max_value=100000.0, value=10.0, step=0.5, key=f"{key}_st")
+        bank = c3.number_input("Banca (€)", min_value=10.0, max_value=1_000_000.0, value=float(s.bankroll), step=10.0,
+                               key=f"{key}_bk")
+        o = options[i or 0]
+        odds, p = float(o["odds"]), float(o["p"])
+        ev = p * odds - 1
+        sug, pct_, txt = assistant.stake_advice(ev, odds, bank, s.kelly_fraction, s.max_stake_pct)
+        kpi_strip([("Cobras si aciertas", num(stake * odds) + " €", f"cuota {num(odds)}", "amber", "am"),
+                   ("Beneficio", num(stake * (odds - 1)) + " €", f"probabilidad real {pct(p)}", "green", "pos"),
+                   ("Valor esperado", num(stake * ev) + " €", f"{pct(ev, True)} por euro", "cyan", sign_cls(ev)),
+                   ("Stake sugerido", num(sug) + " €", f"{pct(pct_, dec=1)} de la banca", "violet", "")])
+        st.caption(txt)
 
 
 def isnum(x) -> bool:
@@ -338,6 +406,9 @@ if not s.db_path.exists():
     st.stop()
 D = get_data(str(s.db_path), s.db_path.stat().st_mtime, CODE_SIG)
 MATCHES = {r["id"]: r for r in D["matches"].to_dict("records")} if not D["matches"].empty else {}
+_SX = D.get("selections", pd.DataFrame())
+SEL_IDX = {(r["match_id"], r["market"], r["selection"], float(r["point"] or 0)): r
+           for r in (_SX.to_dict("records") if _SX is not None and not _SX.empty else [])}
 
 
 def report_for(match_id: str, sport: str, market: str, selection: str, point: float, p: float, price, priced: bool,
@@ -405,8 +476,14 @@ def pick_card(r: dict) -> str:
                        None, False)
     reasons = "".join(f"<li>{e(x)}</li>" for x in lines) + \
         (f'<li><details><summary>Detalles técnicos</summary><ul>{tech}</ul></details></li>' if tech else "")
+    sx = SEL_IDX.get((r["match_id"], r["market"], r["selection"], float(r.get("point") or 0))) or {}
+    score = webdata.confidence_score(p, ev, r.get("n_books"), sx.get("n_sharp"), r.get("verified") == 1,
+                                     sx.get("b365_age_h"), bool(sx.get("derived")))
+    pay = (f'<div class="pay">Con 10 € cobras <b>{num(10 * odds)} €</b> · beneficio esperado '
+           f'<b class="{sign_cls(ev)}">{num(10 * ev) if isnum(ev) else "—"} €</b></div>') if tier != "verificar" else \
+        f'<div class="pay">Cógela solo a <b>{num(r["min_odds"])}</b> o más en bet365</div>'
     return (f'<div class="pk t-{tier}{" off" if off else ""}"><div class="pk-h">{badges}'
-            f'<span class="w">{when(r["kickoff"])}</span></div>'
+            f'<span class="w">{when(r["kickoff"])}</span>{gauge(score)}</div>'
             f'<div class="pk-lg">{sp["icono"]} {league_flag(r["league"])} {e(league_name(r["league"]))} · '
             f'{MK.get(r["market"], r["market"])}</div>'
             f'<div class="pk-m">{e(r["home"])} – {e(r["away"])}</div><div class="pk-s">{e(r["label"])}</div>'
@@ -414,7 +491,7 @@ def pick_card(r: dict) -> str:
             f'<div class="pbar big"><i style="width:{min(p, 1) * 100:.1f}%"></i>'
             f'<u style="left:calc({min(implied, 1) * 100:.1f}% - 1px)"></u></div>'
             f'<div class="pk-f"><span>Prob. real {pct(p)}</span><span>bet365 implica {pct(implied)}</span>'
-            f'<span>Conf. {e(str(r.get("confidence", "—")))}</span></div>'
+            f'<span>Conf. {e(str(r.get("confidence", "—")))}</span></div>{pay}'
             f'<details><summary>Por qué</summary><ul>{reasons}</ul></details></div>')
 
 
@@ -485,7 +562,8 @@ def combo_card(r: dict) -> str:
     ev_lab = "Valor" if r["tier"] == "valor" else "Margen"
     return (f'<div class="pk t-{tier_cls}"><div class="pk-h"><span class="bdg {t_cls}">{t_txt}</span>'
             f'<span class="bdg b-risk">{COMBO_NAME.get(r["risk"], r["risk"])}</span>'
-            f'<span class="w">{len(legs)} selecciones · {when(r["first_kickoff"])}</span></div>'
+            f'<span class="w">{len(legs)} selecciones · {when(r["first_kickoff"])}</span>'
+            f'{gauge(webdata.confidence_score(r["prob"], r["ev"] if r["tier"] != "verificar" else None, 3, 1, r["tier"] != "verificar"))}</div>'
             f'<ul class="legs">{"".join(items)}</ul><div class="cells">'
             f'<div class="cell hl"><div class="k">Cuota</div><div class="o">{num(r["odds"])}</div></div>'
             f'<div class="cell"><div class="k">Prob.</div><div class="o">{pct(r["prob"], dec=1)}</div></div>'
@@ -496,7 +574,10 @@ def combo_card(r: dict) -> str:
             f'</div><div class="pbar big"><i style="width:{min(r["prob"], 1) * 100:.1f}%"></i>'
             f'<u style="left:calc({min(implied, 1) * 100:.1f}% - 1px)"></u></div>'
             f'<div class="pk-f"><span>Prob. real conjunta {pct(r["prob"], dec=1)}</span>'
-            f'<span>La cuota implica {pct(implied, dec=1)}</span></div></div>')
+            f'<span>La cuota implica {pct(implied, dec=1)}</span></div>'
+            f'<div class="pay">Con 10 € cobras <b>{num(10 * r["odds"])} €</b>'
+            + ("" if r["tier"] == "verificar" else f' · beneficio esperado <b class="{sign_cls(r["ev"])}">{num(10 * r["ev"])} €</b>')
+            + '</div></div>')
 
 
 def markets_block(sel: pd.DataFrame, sport: str) -> str:
@@ -574,7 +655,9 @@ def match_card(m: dict, odds: pd.DataFrame, preds: pd.DataFrame, info: dict, a: 
             tags.append(f'Margen esperado {info["margen"]:+.1f} · total {info["total"]:.0f}')
     head = (f'<div class="mc-h"><span class="t">{loc(m["kickoff"]):%H:%M}</span>'
             f'<span>{league_flag(m["league"])} {e(league_name(m["league"]))}</span>'
-            + (f'<span class="lt {a["light"]}"></span>' if a else "") + '</div>'
+            + (gauge(webdata.confidence_score(a.get("p_final"), a.get("ev"), a.get("n_books"), a.get("n_sharp"),
+                                              isnum(a.get("b365_odds")), a.get("b365_age_h"))) if a and isnum(a.get("p_final"))
+               else "") + (f'<span class="lt {a["light"]}"></span>' if a else "") + '</div>'
             f'<div class="mc-teams"><span class="nm">{e(m["home"])}</span><span class="xs">{xs_h}</span>'
             f'<span class="nm">{e(m["away"])}</span><span class="xs">{xs_a}</span></div>')
     tri = ""
@@ -684,22 +767,26 @@ def page_radar():
     kpi_strip([
         ("Partidos analizados", str(sm["partidos"]), f'{sm["verde"]} verdes · {sm["ambar"]} ámbar · {sm["rojo"]} rojos',
          "cyan", ""),
-        ("Élite", str(sm["elite"]), "valor ≥ +" + num(s.min_ev * 100, 1) + " % frente al precio justo", "amber", "am"),
-        ("Sólidas", str(sm["solida"]), f"prob. ≥ {pct(s.solid_min_prob)} a precio justo", "green", "pos"),
-        ("Por confirmar", str(sm.get("verificar", 0)), "falta cuota de bet365 reciente", "violet", ""),
+        ("💎 Élite", str(sm["elite"]), "valor ≥ +" + num(s.min_ev * 100, 1) + " % frente al precio justo", "amber", "am"),
+        ("🛡️ Sólidas", str(sm["solida"]), f"prob. ≥ {pct(s.solid_min_prob)} a precio justo", "green", "pos"),
+        ("⚖️ Moderado", str(sm.get("moderado", 0)), "ventaja ligera o mercado secundario", "cyan", ""),
+        ("🔥 Cuota alta", str(sm.get("cuota_alta", 0)), f"cuota {num(s.high_odds_min)}-{num(s.high_odds_max)} con valor",
+         "red", ""),
         ("Yield Élite", pct(k.get("yield"), True) if k["n"] else "—",
          f'{k["n"]} resueltas' + (f" desde {SINCE_DEFAULT}" if SINCE_DEFAULT else " · todo el historial"),
          "green" if k.get("yield", 0) and k["yield"] >= 0 else "red", sign_cls(k.get("yield"))),
         ("CLV", pct(k.get("clv"), True) if k.get("clv_n") else "—", f'{k.get("clv_n", 0)} con cierre de Pinnacle',
          "cyan", sign_cls(k.get("clv")))])
     P = D["picks"]
-    top = P[P["tier"].isin(["valor", "solida"])] if not P.empty else P
+    order = {"valor": 0, "cuota_alta": 1, "solida": 2, "moderado": 3}
+    top = P[P["tier"].isin(list(order))] if not P.empty else P
     if not top.empty:
-        top = top.assign(_o=top["tier"].map({"valor": 0, "solida": 1}), _a=top["active"].fillna(1) * -1) \
+        top = top.assign(_o=top["tier"].map(order), _a=top["active"].fillna(1) * -1) \
             .sort_values(["_o", "_a", "score"], ascending=[True, True, False])
-        section("Destacadas", len(top), "Élite: bet365 paga más que el precio justo limpio. Sólidas: alta probabilidad "
-                                        "y bet365 paga el precio justo (sin ventaja, sin regalar margen).")
-        cards(top, 6)
+        section("Destacadas", len(top), "💎 Élite: bet365 paga claramente más que el precio justo. 🔥 Cuota alta: "
+                                        "2,40-3,80 con valor. 🛡️ Sólidas: alta probabilidad a precio justo. ⚖️ Moderado: "
+                                        "ventaja ligera o mercado secundario.")
+        cards(top, 8)
 
     section("Todos los partidos", len(A) if not A.empty else 0,
             "Cada fila es un partido: la selección más interesante, su probabilidad real (barra verde) frente a la que "
@@ -728,7 +815,7 @@ def page_radar():
 
 
 def page_picks():
-    topbar("Jugadas", "Élite, sólidas, por confirmar y a revisar")
+    topbar("Jugadas", "Élite, sólidas, valor moderado, cuota alta, por confirmar y a revisar")
     P = D["picks"]
     if P.empty:
         empty("No hay jugadas para los próximos días. El radar se actualiza cada 3 horas.")
@@ -745,8 +832,12 @@ def page_picks():
     P = P.sort_values({"calidad": "score", "hora": "kickoff", "prob": "p_final"}.get(order or "calidad", "score"),
                       ascending=(order == "hora"))
     counts = P["tier"].value_counts()
-    tabs = st.tabs([f'Élite · {counts.get("valor", 0)}', f'Sólidas · {counts.get("solida", 0)}',
-                    f'Por confirmar · {counts.get("verificar", 0)}', f'Revisar · {counts.get("revisar", 0)}'])
+    rec = P[P["tier"].isin(["valor", "solida", "moderado", "cuota_alta"])]
+    stake_calculator([dict(name=f'{TIER.get(r["tier"], (r["tier"],))[0]} · {r["label"]} ({r["home"]} – {r["away"]}) · '
+                                f'{num(r["odds"])}', odds=r["odds"], p=r["p_final"]) for r in rec.to_dict("records")],
+                     "calc_p")
+    tier_list = ["valor", "solida", "moderado", "cuota_alta", "verificar", "revisar"]
+    tabs = st.tabs([f'{TAB_NAME[t]} · {counts.get(t, 0)}' for t in tier_list])
     texts = {
         "valor": ("bet365 paga más que el precio justo limpio (Pinnacle o consenso de casas válidas a la misma hora). "
                   "Las marcadas con Telegram tienen referencia sharp y se han enviado como aviso.",
@@ -754,12 +845,18 @@ def page_picks():
                   f"{num(s.min_odds)}-{num(s.max_odds)}. Mira las sólidas y el radar de la jornada."),
         "solida": ("Probabilidad real alta y bet365 paga al menos el precio justo. No es ventaja: es no regalar margen. "
                    "Son la base de las combinadas.", "No hay sólidas para los próximos días."),
+        "moderado": ("Ventaja ligera (entre 0 % y el umbral élite) frente al precio justo limpio, en partidos "
+                     "equilibrados o mercados secundarios: doble oportunidad, más/menos, ambos marcan o hándicap.",
+                     "Ninguna selección con ventaja ligera ahora mismo."),
+        "cuota_alta": (f"Cuota {num(s.high_odds_min)}-{num(s.high_odds_max)} donde bet365 paga al menos un "
+                       f"{pct(s.high_min_ev, True)} sobre el precio justo limpio: más riesgo, pero con valor real. Stake "
+                       "pequeño (Kelly fraccionado).", "Ninguna cuota alta con valor ahora mismo."),
         "verificar": ("El mercado sugiere valor pero falta la cuota de bet365 reciente: apuesta solo si bet365 paga la "
                       "cuota mínima indicada.", "Nada pendiente de confirmar."),
         "revisar": ("Valor esperado anormalmente alto: casi siempre es una cuota mal publicada. Nunca se apuesta.",
                     "Ninguna anomalía detectada."),
     }
-    for tab, tier in zip(tabs, ["valor", "solida", "verificar", "revisar"]):
+    for tab, tier in zip(tabs, tier_list):
         with tab:
             hint, msg = texts[tier]
             st.markdown(f'<p class="hint">{hint}</p>', unsafe_allow_html=True)
@@ -783,6 +880,9 @@ def page_combos():
     if Cb.empty:
         empty("No hay partidos suficientes en las próximas 36 horas para montar combinadas. Prueba el Asistente.")
         return
+    stake_calculator([dict(name=f'{COMBO_NAME.get(r["risk"], r["risk"])} · {COMBO_TIER.get(r["tier"], (r["tier"],))[0]} · '
+                                f'cuota {num(r["odds"])} · {len(json.loads(r["legs"]))} patas', odds=r["odds"], p=r["prob"])
+                      for r in Cb.to_dict("records")], "calc_c")
     profiles = [p for p in ("segura", "equilibrada", "valor") if p in set(Cb["risk"])] + \
         [p for p in Cb["risk"].unique() if p not in ("segura", "equilibrada", "valor")]
     tabs = st.tabs([f'{COMBO_NAME.get(p, p)} · {int((Cb["risk"] == p).sum())}' for p in profiles])
@@ -838,81 +938,102 @@ def page_matches():
                     st.caption("Ataque y defensa: fuerza estimada por el modelo. Forma: últimos 5 partidos.")
 
 
+def _risk_changed():
+    st.session_state["as_odds"] = tuple(assistant.RISK_RANGE[st.session_state.get("as_risk") or "medio"])
+
+
 def page_assistant():
     topbar("Asistente de apuesta", "Copiloto cuantitativo: banca, riesgo, deportes y cuota objetivo")
     now = datetime.now(timezone.utc)
-    with st.form("asis"):
-        c1, c2, c3 = st.columns(3)
-        bankroll = c1.number_input("Banca (€)", min_value=10.0, max_value=1_000_000.0, value=float(s.bankroll), step=10.0)
-        dl_date = c2.date_input("Que se resuelva antes del día", value=(datetime.now(TZ) + timedelta(days=2)).date(),
-                                min_value=datetime.now(TZ).date(), format="DD/MM/YYYY")
-        dl_time = c3.time_input("a las", value=time(23, 59), step=timedelta(minutes=30))
-        c4, c5 = st.columns(2)
-        risk = c4.segmented_control("Riesgo", ["bajo", "medio", "alto"], default="bajo",
-                                    format_func=lambda r: RISK_NAME[r]) or "bajo"
-        tipo = c5.segmented_control("Tipo", ["auto", "simple", "combinada"], default="auto",
-                                    format_func=lambda t: {"auto": "Lo mejor", "simple": "Simple",
-                                                           "combinada": "Combinada"}[t]) or "auto"
-        c6, c7 = st.columns([2, 1])
-        sports = c6.multiselect("Deportes", [k for k in SPORTS if k in s.active_sports],
-                                default=[k for k in SPORTS if k in s.active_sports],
-                                format_func=lambda k: f'{SPORTS[k]["icono"]} {SPORTS[k]["nombre"]}')
-        only_good = c7.toggle("Solo élite y sólidas", value=False,
-                              help="Descarta las selecciones donde bet365 cobra margen por encima del precio justo.")
-        use_odds = st.toggle("Fijar cuota objetivo", value=False)
-        odds_range = st.slider("Cuota total objetivo", 1.20, 12.0, (1.70, 2.20), step=0.05)
-        go_ = st.form_submit_button("Construir la mejor apuesta", type="primary", use_container_width=True)
+    if "as_odds" not in st.session_state:
+        st.session_state["as_odds"] = tuple(assistant.RISK_RANGE["medio"])
+    c1, c2, c3 = st.columns(3)
+    bankroll = c1.number_input("Banca (€)", min_value=10.0, max_value=1_000_000.0, value=float(s.bankroll), step=10.0,
+                               key="as_bank")
+    dl_date = c2.date_input("Que se resuelva antes del día", value=(datetime.now(TZ) + timedelta(days=2)).date(),
+                            min_value=datetime.now(TZ).date(), format="DD/MM/YYYY", key="as_date")
+    dl_time = c3.time_input("a las", value=time(23, 59), step=timedelta(minutes=30), key="as_time")
+    c4, c5 = st.columns(2)
+    risk = c4.segmented_control("Riesgo", ["bajo", "medio", "alto"], default="medio", key="as_risk",
+                                on_change=_risk_changed, format_func=lambda r: {
+                                    "bajo": "Bajo · 1,40-1,90", "medio": "Medio · 1,90-2,80",
+                                    "alto": "Alto · 2,80-5,00"}[r]) or "medio"
+    tipo = c5.segmented_control("Tipo", ["auto", "simple", "combinada"], default="auto", key="as_tipo",
+                                format_func=lambda t: {"auto": "Lo mejor", "simple": "Simple",
+                                                       "combinada": "Combinada"}[t]) or "auto"
+    odds_range = st.slider("Cuota total objetivo (el riesgo la ajusta; puedes afinarla)", 1.20, 8.00, step=0.05,
+                           key="as_odds")
+    c6, c7 = st.columns([2, 1])
+    sports = c6.multiselect("Deportes", [k for k in SPORTS if k in s.active_sports],
+                            default=[k for k in SPORTS if k in s.active_sports], key="as_sports",
+                            format_func=lambda k: f'{SPORTS[k]["icono"]} {SPORTS[k]["nombre"]}')
+    only_good = c7.toggle("Solo niveles recomendados", value=False, key="as_good",
+                          help="Solo élite, sólidas, moderadas y cuota alta (además de las selecciones por confirmar).")
+    go_ = st.button("Construir la mejor apuesta", type="primary", use_container_width=True)
+    lo, hi = odds_range
     if not go_:
-        st.markdown('<p class="hint">El copiloto usa todas las selecciones analizadas con cuota de bet365 de menos de 72 h '
-                    '(todos los mercados), descarta las que no terminan antes de tu fecha y construye la mejor simple o '
-                    'combinada. Para cada una te da el stake sobre tu banca (Kelly fraccionado si hay ventaja; si no, como '
-                    'mucho un 0,5 %) y el porqué: probabilidad real frente a la cuota, referencia de mercado, forma, '
-                    'rachas, local/visitante y cara a cara.</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="hint">Cuota total pedida: <b>{num(lo)}-{num(hi)}</b>. El copiloto la respeta siempre. '
+                    'Primero busca cuotas de bet365 confirmadas con valor ≥ 0 (ventaja o precio justo sin margen); si no '
+                    'hay, usa selecciones «por confirmar» indicando la cuota mínima a la que cogerlas; nunca propone una '
+                    'apuesta con valor negativo como opción principal. Te da tres planes: el principal (cumple tu filtro), '
+                    'uno más conservador y otro de mayor retorno, con stake sobre tu banca y el informe de cada selección.</p>',
+                    unsafe_allow_html=True)
         return
     deadline = datetime.combine(dl_date, dl_time, TZ).astimezone(timezone.utc)
-    plan, alts, n = assistant.copilot(D["pool"], bankroll, deadline, now, risk, tipo, sports,
-                                      odds_range if use_odds else None, only_good, s.kelly_fraction, s.max_stake_pct)
+    plan, alts, n = assistant.copilot(D["pool"], bankroll, deadline, now, risk, tipo, sports, (lo, hi), only_good,
+                                      s.kelly_fraction, s.max_stake_pct)
     if plan is None:
-        empty(f"No encuentro selecciones con cuota de bet365 que terminen antes del {dl_date:%d/%m} a las {dl_time:%H:%M}"
-              " con estas condiciones. Amplía la fecha, la cuota objetivo o los deportes.")
+        empty(f"No hay selecciones analizadas que terminen antes del {dl_date:%d/%m} a las {dl_time:%H:%M} en los "
+              "deportes elegidos. Amplía la fecha o los deportes.")
         return
     render_plan(plan, n, main=True)
-    for a in alts[:3]:
+    for a in alts:
         render_plan(a, n, main=False)
     st.caption("Las probabilidades son estimaciones. Comprueba la cuota en bet365 antes de apostar: si ha bajado, la "
                "recomendación puede dejar de tener sentido. Apuesta solo lo que puedas permitirte perder.")
 
 
+ROLE_TITLE = {"principal": "Opción principal", "conservadora": "Alternativa más conservadora",
+              "retorno": "Alternativa de mayor retorno", "cercana": "Ninguna apuesta cumple tu filtro"}
+STATUS_BADGE = {"exacta": ("Cuotas confirmadas", "b-solid"), "por_confirmar": ("Por confirmar en bet365", "b-check"),
+                "cercana": ("Alternativa más cercana", "b-warn")}
+
+
 def render_plan(p: assistant.Plan, n: int, main: bool):
-    title = {"simple": "Apuesta simple", "combinada": f"Combinada de {len(p.legs)}",
-             "repartir": f"Reparto en {len(p.legs)} simples"}[p.tipo]
+    title = {"simple": "apuesta simple", "combinada": f"combinada de {len(p.legs)}",
+             "repartir": f"reparto en {len(p.legs)} simples"}[p.tipo]
     rows = []
     for l in p.legs:
         sp = SPORTS.get(l["sport"], SPORTS["football"])["icono"]
         why = "".join(f"<li>{e(str(w))}</li>" for w in (l.get("why") or []))
-        rows.append(f'<li><span>{sp} {badge(l.get("tier") or "pronostico")} <b>{e(l["label"])}</b> '
-                    f'<span class="lp">· {MK.get(l.get("market"), "")}</span><br><span class="lp">'
-                    f'{e(l["home"])} – {e(l["away"])} · {when(l["kickoff"])} · prob. {pct(l["p_final"])} · valor '
-                    f'{pct(l["ev"], True)}</span>'
+        unpriced = l.get("priced") is False
+        odds_txt = f'≥ {num(l.get("min_odds") or l["odds"])}' if unpriced else num(l["odds"])
+        rows.append(f'<li><span>{sp} {badge(l.get("tier") or "pronostico") if not unpriced else badge("verificar")} '
+                    f'<b>{e(l["label"])}</b> <span class="lp">· {MK.get(l.get("market"), "")}</span><br><span class="lp">'
+                    f'{e(l["home"])} – {e(l["away"])} · {when_nat(l["kickoff"])} · prob. {pct(l["p_final"])}'
+                    + ("" if unpriced else f' · valor {pct(l["ev"], True)}') + '</span>'
                     + (f'<ul class="why">{why}</ul>' if why and main else
                        f'<details><summary>Por qué</summary><ul class="why">{why}</ul></details>' if why else "")
-                    + f'</span><span class="lo">{num(l["odds"])}</span></li>')
-    big = (f'<div><b class="am">{num(p.odds)}</b><span>cuota bet365</span></div>'
+                    + f'</span><span class="lo">{odds_txt}</span></li>')
+    stt, stc = STATUS_BADGE.get(p.status, (p.status, "b-none"))
+    odds_lbl = "cuota mínima total" if p.status == "por_confirmar" else "cuota bet365"
+    big = (f'<div><b class="am">{"≥ " if p.status == "por_confirmar" else ""}{num(p.odds)}</b><span>{odds_lbl}</span></div>'
            f'<div><b>{pct(p.prob)}</b><span>probabilidad real</span></div>'
            f'<div><b class="{sign_cls(p.ev)}">{pct(p.ev, True)}</b><span>valor esperado</span></div>'
            f'<div><b>{num(p.budget)} €</b><span>stake sugerido ({pct(p.stake_pct, dec=1)} de la banca)</span></div>'
            f'<div><b>{num(p.budget * p.odds)} €</b><span>cobras si aciertas</span></div>')
     rat = "".join(f"<li>{e(x)}</li>" for x in p.rationale)
+    head = (f'<h4>{ROLE_TITLE.get(p.role, p.role)} · {title}</h4>'
+            f'<div style="margin:.2rem 0 .3rem"><span class="bdg {stc}">{stt}</span>'
+            + ("" if p.in_range else ' <span class="bdg b-warn">fuera del rango pedido</span>') + '</div>'
+            f'<div class="mute" style="font-size:.8rem">Elegida entre {n} selecciones · se resuelve {when_nat(p.ends)}</div>')
+    if p.role == "cercana":
+        st.markdown(f'<div class="warnbox">{e(p.rationale[1] if len(p.rationale) > 1 else "")}</div>',
+                    unsafe_allow_html=True)
     st.markdown(
-        f'<div class="{"plan" if main else "alt"}"><h4>{"Recomendación · " if main else "Alternativa · "}{title}</h4>'
-        f'<div class="mute" style="font-size:.8rem">Elegida entre {n} selecciones con cuota de bet365 · se resuelve '
-        f'hacia el {when(p.ends)}</div>'
-        f'{f"<div class=big>{big}</div>" if main else ""}'
+        f'<div class="{"plan" if main else "alt"}">{head}<div class=big>{big}</div>'
         + (f'<ul class="why" style="font-size:.8rem">{rat}</ul>' if rat else "")
-        + f'<ul class="legs">{"".join(rows)}</ul>'
-        + ("" if main else f'<div class="mute" style="font-size:.8rem;margin-top:.4rem">cuota {num(p.odds)} · '
-                           f'prob. {pct(p.prob)} · valor {pct(p.ev, True)} · stake {num(p.budget)} €</div>')
-        + "</div>", unsafe_allow_html=True)
+        + f'<ul class="legs">{"".join(rows)}</ul></div>', unsafe_allow_html=True)
 
 
 def page_perf():
@@ -928,10 +1049,10 @@ def page_perf():
     if scope == "custom":
         since = st.date_input("Desde", value=(datetime.now(TZ) - timedelta(days=30)).date(), format="DD/MM/YYYY",
                               key="pf_date").isoformat()
-    tiers = c2.segmented_control("Nivel", ["valor", "solida", "combinadas", "ambos"], default="valor", key="pf_tier",
-                                 label_visibility="collapsed",
-                                 format_func=lambda t: {"valor": "Élite", "solida": "Sólidas", "combinadas": "Combinadas",
-                                                        "ambos": "Élite + sólidas"}[t]) or "valor"
+    tiers = c2.selectbox("Nivel", ["todas", "valor", "solida", "moderado", "cuota_alta", "combinadas"], key="pf_tier",
+                         label_visibility="collapsed",
+                         format_func=lambda t: {"todas": "Todos los niveles", "combinadas": "Combinadas"}.get(
+                             t, TIER.get(t, (t,))[0])) or "todas"
     mode = c3.segmented_control("Medida", ["unit", "stake"], default="unit", key="pf_mode", label_visibility="collapsed",
                                 format_func=lambda m: {"unit": "1 unidad por jugada", "stake": "Stakes reales (€)"}[m]) or "unit"
     if not SINCE_DEFAULT:
@@ -949,7 +1070,7 @@ def page_perf():
                                     "ROI": "{:+.1%}"}, na_rep="—"), hide_index=True, width="stretch")
     if tiers == "combinadas":
         R = webdata.combos_as_picks(RC_all)
-    elif tiers != "ambos" and not R.empty:
+    elif tiers != "todas" and not R.empty:
         R = R[R["tier"] == tiers]
     k = webdata.kpis(R, mode, s.bankroll)
     unit = " €" if mode == "stake" and not R.empty and R["stake"].fillna(0).sum() > 0 else " u"

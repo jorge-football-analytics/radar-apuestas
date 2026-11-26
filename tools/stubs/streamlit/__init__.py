@@ -43,8 +43,17 @@ def _fmt(options, format_func):
             format_func(o)
 
 
+session_state: dict = {}
+
+
 def _ov(key, default):
-    return OUT["overrides"].get(key, default)
+    if key in OUT["overrides"]:
+        return OUT["overrides"][key]
+    if key is not None and key in session_state:
+        return session_state[key]
+    if key is not None and default is not None:
+        session_state[key] = default
+    return default
 
 
 def pills(label, options, default=None, format_func=None, key=None, **k):
@@ -53,15 +62,17 @@ def segmented_control(label, options, default=None, format_func=None, key=None, 
     _fmt(options, format_func); return _ov(key, default)
 def selectbox(label, options, format_func=None, key=None, **k):
     options = list(options); _fmt(options, format_func); return _ov(key, options[0] if options else None)
-def multiselect(label, options, default=None, format_func=None, **k):
-    _fmt(list(options), format_func); return default
+def multiselect(label, options, default=None, format_func=None, key=None, **k):
+    _fmt(list(options), format_func); return _ov(key, default)
 def text_input(label, key=None, **k): return _ov(key, "")
 def number_input(label, min_value=None, max_value=None, value=None, step=None, key=None, **k):
-    return value if value is not None else min_value
-def date_input(label, value=None, key=None, **k): return value
-def time_input(label, value=None, **k): return value
-def toggle(label, value=False, **k): return value
+    return _ov(key, value if value is not None else min_value)
+def date_input(label, value=None, key=None, **k): return _ov(key, value)
+def time_input(label, value=None, key=None, **k): return _ov(key, value)
+def toggle(label, value=False, key=None, **k): return _ov(key, value)
+def expander(label, expanded=False): return _Ctx()
 def form_submit_button(*a, **k): return OUT["submit"]
+def button(*a, **k): return OUT["submit"]
 
 
 class _Ctx:

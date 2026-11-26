@@ -175,6 +175,7 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         # línea real de más/menos del mercado (la doble oportunidad sale exacta del 1X2 y no lo necesita)
         # NBA/NFL: el hándicap y el total derivados del moneyline usan una normal sobre el margen, demasiado gruesa
         # para declarar ventaja (en la NFL los márgenes se concentran en 3 y 7): solo información
+        goal_guess_now = is_derived and sport == "football" and market in ("ou", "btts", "spread") and not goal_line_known
         weak_derived = is_derived and (n_sharp < 1 or (sport == "football" and market in ("ou", "btts", "spread")
                                                        and not goal_line_known) or sport in ("basketball", "nfl"))
         if ev >= s.min_ev and ok and weak_derived:
@@ -188,11 +189,17 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
                 tier = "verificar"
         elif ev > s.max_ev and verified and enough:
             tier = "revisar"
+        elif (verified and enough and solid_fresh and not weak_derived and not goal_guess_now
+              and s.high_odds_min <= price <= s.high_odds_max and s.high_min_ev <= ev <= s.max_ev and p >= 0.25):
+            tier = "cuota_alta"
         elif (verified and enough and in_range and solid_fresh and p >= s.solid_min_prob
               and not weak_derived
               and not (is_derived and sport == "football" and market in ("ou", "btts", "spread") and not goal_line_known)
               and s.solid_min_ev <= ev <= s.max_ev):
             tier = "solida"
+        elif (verified and enough and in_range and solid_fresh and not weak_derived and not goal_guess_now
+              and 0.0 <= ev < s.min_ev and p >= s.moderate_min_prob):
+            tier = "moderado"
         else:
             tier = "pronostico"
         elite = int(tier == "valor" and not is_derived and conf == "alta" and n_sharp >= 1 and ev >= s.alert_ev
@@ -221,6 +228,10 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
                            "confírmalo antes de apostar")
         if tier == "revisar":
             reasons.append(f"Valor esperado {ev:+.0%} demasiado alto: casi seguro es un error de datos. No apostar")
+        if tier == "moderado":
+            reasons.append("Valor moderado: ventaja ligera frente al precio justo limpio")
+        if tier == "cuota_alta":
+            reasons.append("Cuota alta con riesgo controlado: bet365 paga por encima del precio justo limpio")
         if tier == "solida":
             reasons.append("Sólida: alta probabilidad y bet365 paga el precio justo (sin ventaja, sin regalar margen)"
                            + (f" · cuota de hace {age_h:.0f} h: confírmala" if age_h and age_h > s.b365_max_age_h else ""))
@@ -229,7 +240,8 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         cands.append(Candidate(
             match["id"], sport, match["league"], match["kickoff"], match["home"], match["away"], market, sel, point,
             label(market, sel, point, match["home"], match["away"], unit), p_mod, p_mkt, p, price, s.book,
-            price if verified else None, ev, kelly_stake(p, price, s) if tier in ("valor", "solida") else 0.0, conf,
+            price if verified else None, ev, kelly_stake(p, price, s) if tier in ("valor", "solida", "moderado", "cuota_alta")
+            else 0.0, conf,
             " | ".join(reasons), n_books, risk_of(p), tier, int(verified), round((1 + s.min_ev) / p, 2), elite,
             round(score, 4), ev if verified else None, n_sharp))
         goal_guess = is_derived and sport == "football" and market in ("ou", "btts", "spread") and not goal_line_known
@@ -245,7 +257,7 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         k = (c.market, c.point)
         if k not in out or c.ev > out[k].ev:
             out[k] = c
-    if not any(c.tier in ("valor", "verificar", "solida") for c in out.values()):
+    if not any(c.tier in ("valor", "verificar", "solida", "moderado", "cuota_alta") for c in out.values()):
         pron = [c for c in cands if c.tier == "pronostico" and c.p_final >= 0.35 and c.ev >= -0.06
                 and (c.n_books >= s.min_books or c.n_sharp >= 1)]
         if pron:

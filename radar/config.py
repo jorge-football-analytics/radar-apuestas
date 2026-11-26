@@ -205,6 +205,12 @@ class Settings:
     solid_min_ev: float = field(default_factory=lambda: _f("SOLID_MIN_EV", -0.005))
     # Las sólidas son informativas (no van a Telegram): admiten cuotas de bet365 de hasta 72 h, avisando de la hora
     solid_b365_max_age_h: float = field(default_factory=lambda: _f("SOLID_B365_MAX_AGE_H", 72))
+    # Nivel 3 · Valor moderado: ventaja ligera (0 % ≤ valor < MIN_EV) en partidos equilibrados o mercados secundarios
+    moderate_min_prob: float = field(default_factory=lambda: _f("MODERATE_MIN_PROB", 0.40))
+    # Nivel 4 · Cuota alta / riesgo controlado: cuota 2,40-3,80 con infravaloración real frente al precio justo limpio
+    high_odds_min: float = field(default_factory=lambda: _f("HIGH_ODDS_MIN", 2.40))
+    high_odds_max: float = field(default_factory=lambda: _f("HIGH_ODDS_MAX", 3.80))
+    high_min_ev: float = field(default_factory=lambda: _f("HIGH_MIN_EV", 0.01))
     # casas VÁLIDAS (mercado completo, margen razonable, misma hora que bet365) sin contar bet365
     min_books: int = field(default_factory=lambda: _i("MIN_BOOKS", 2))
     # Valor esperado por encima de esto = casi seguro un error de datos → 'revisar', apuesta 0

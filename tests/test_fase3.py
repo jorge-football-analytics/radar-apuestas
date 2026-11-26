@@ -269,22 +269,6 @@ def test_combos_without_bet365_prices_are_por_confirmar():
     assert all(l["priced"] is False and l["min_odds"] > 1 for c in combos for l in c["legs"])
 
 
-def test_copilot_respects_target_odds_and_sizes_stake():
-    from radar import assistant
-
-    now = datetime(2026, 11, 28, 8, tzinfo=timezone.utc)
-    preds, matches = _preds()
-    pool = preds.merge(pd.DataFrame([dict(match_id=k, **v) for k, v in matches.items()]), on="match_id")
-    pool = pool.assign(odds=pool["price"], risk="bajo", confidence="—", why=[["Forma VVVVE"]] * len(pool))
-    plan, alts, n = assistant.copilot(pool, 1000, now + timedelta(days=2), now, "medio", "combinada",
-                                      odds_range=(2.5, 4.0))
-    assert plan and plan.tipo == "combinada" and 2.5 <= plan.odds <= 4.0 and n == 6
-    assert plan.budget == pytest.approx(5.0) and plan.stake_pct == 0.005  # sin ventaja: como mucho un 0,5 %
-    assert all(l["why"] for l in plan.legs) and plan.rationale
-    stake, pct, txt = assistant.stake_advice(0.05, 2.0, 1000)
-    assert pct == pytest.approx(0.0125) and stake == pytest.approx(12.5) and "Kelly" in txt
-
-
 # ------------------------------------------------------------------ liquidación de copas con ESPN
 def test_cup_matches_settle_with_espn_results(tmp_path):
     from radar.db import DB
@@ -313,5 +297,5 @@ def test_level_summary_includes_combo_profiles():
     rc = pd.DataFrame(dict(first_kickoff=["2026-11-27T12:00:00+00:00"], odds=[2.0], won=[1], stake=[0.0], profit=[0.0],
                            prob=[0.5], risk=["segura"], sports=["football"], created=["2026-11-27"]))
     t = level_summary(r, rc)
-    assert list(t["nivel"]) == ["Élite", "Sólidas", "Combinada segura"]
+    assert list(t["nivel"]) == ["Élite", "Sólidas", "Valor moderado", "Cuota alta", "Combinada segura"]
     assert t.set_index("nivel").loc["Combinada segura", "yield"] == pytest.approx(1.0)

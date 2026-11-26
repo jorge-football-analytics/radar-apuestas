@@ -22,6 +22,8 @@ import json
 from collections import Counter
 from math import prod
 
+import logging
+
 import pandas as pd
 
 from .config import SPORTS, Settings, sport_of
@@ -36,6 +38,8 @@ PROFILES = {
 MK_NAME = {"1x2": "Resultado", "ml": "Ganador", "ou": "Más/menos", "spread": "Hándicap", "btts": "Ambos marcan",
            "dc": "Doble oportunidad"}
 
+
+log = logging.getLogger(__name__)
 
 def _records(preds) -> list[dict]:
     if preds is None:
@@ -57,8 +61,12 @@ def leg_report(m: dict, sport: str, market: str, selection: str, point: float, i
                ) -> list[str]:
     """Informe de una pata: scouting deportivo con datos reales + por qué merece (o no) la pena la cuota."""
     st = (info or {}).get("stats") or {}
-    lines = scouting(st, m["home"], m["away"], sport, market, selection, point,
-                     table_rows(tables, m["league"], m["home"], m["away"]), info)
+    try:
+        lines = scouting(st, m["home"], m["away"], sport, market, selection, point,
+                         table_rows(tables, m["league"], m["home"], m["away"]), info)
+    except (KeyError, TypeError, ValueError):  # estadísticas guardadas con un formato antiguo: no tumbar la web
+        log.warning("scouting incompleto para %s - %s", m.get("home"), m.get("away"))
+        lines = []
     nb = int(n_books) if n_books is not None and not pd.isna(n_books) else None
     ns = int(n_sharp) if n_sharp is not None and not pd.isna(n_sharp) else None
     return lines + [price_line(p, price, priced, nb, ns, derived)]

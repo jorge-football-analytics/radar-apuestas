@@ -86,4 +86,4 @@ def test_load_dashboard_end_to_end(tmp_path):
     d = webdata.load_dashboard(s.db_path, now=now)
     assert len(d["analysis"]) == 1 and d["analysis"]["tier"].iloc[0] == "solida"
     assert (d["picks"]["tier"] == "solida").any() and d["picks"]["locked"].iloc[0] == 1
-    assert set(d["metrics"]) == {"valor", "solida"}
+    assert set(d["metrics"]) == {"valor", "solida", "moderado", "cuota_alta"}

@@ -10,7 +10,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from math import prod
+from math import ceil, prod
 
 import pandas as pd
 
@@ -32,6 +32,9 @@ class Plan:
     notes: list[str] = field(default_factory=list)
     stake_pct: float = 0.0  # stake sugerido sobre la banca (copiloto)
     rationale: list[str] = field(default_factory=list)
+    role: str = "principal"  # principal · conservadora · retorno · cercana
+    status: str = "exacta"  # exacta (cuotas confirmadas) · por_confirmar · cercana (fuera del filtro)
+    in_range: bool = True
 
     @property
     def win(self) -> float:  # beneficio si se gana (simple/combinada)
@@ -73,7 +76,7 @@ def candidates(picks: pd.DataFrame, now: datetime, deadline: datetime, sports: l
 
 def _legs(rows) -> list[dict]:
     keep = ["match_id", "sport", "league", "kickoff", "home", "away", "label", "odds", "p_final", "ev", "tier",
-            "risk", "ends", "confidence", "market", "why"]
+            "risk", "ends", "confidence", "market", "why", "priced", "min_odds"]
     return [{k: r.get(k) for k in keep} for r in rows]
 
 
@@ -150,26 +153,26 @@ def recommend(picks: pd.DataFrame, budget: float, deadline: datetime, now: datet
     return plans[0], plans[1:], len(c)
 
 
-# ======================================================================= copiloto (v3)
-COPILOT_RISK = {
-    # riesgo: (prob. mínima por selección, cuota total mínima, cuota total máxima, máx. patas)
-    "bajo": (0.65, 1.25, 2.20, 3),
-    "medio": (0.50, 1.80, 4.00, 3),
-    "alto": (0.35, 3.50, 12.0, 4),
-}
+# ======================================================================= copiloto (v5)
+# Rango de cuota TOTAL que pide cada nivel de riesgo cuando el usuario no fija otro. Se respeta siempre.
+RISK_RANGE = {"bajo": (1.40, 1.90), "medio": (1.90, 2.80), "alto": (2.80, 5.00)}
+RISK_LEGS = {"bajo": 2, "medio": 3, "alto": 4}  # patas máximas de una combinada
+COPILOT_RISK = {k: (0.0, lo, hi, RISK_LEGS[k]) for k, (lo, hi) in RISK_RANGE.items()}  # compatibilidad
 
 
 def stake_advice(ev: float, odds: float, bankroll: float, kelly_fraction: float = 0.25, max_pct: float = 0.03
                  ) -> tuple[float, float, str]:
-    """(stake €, % de la banca, explicación). Kelly fraccionado solo si hay ventaja; si no, como mucho un 0,5 %."""
-    if ev > 0 and odds > 1:
+    """(stake €, % de la banca, explicación). Kelly fraccionado si hay ventaja; a precio justo (valor 0) como mucho
+    un 0,5 %; con valor negativo, nada."""
+    if ev > 0.0005 and odds > 1:
         f = min(kelly_fraction * ev / (odds - 1), max_pct)
         return round(f * bankroll, 2), f, _es(f"Kelly al {kelly_fraction:.0%} con ventaja de {ev:+.1%}: "
                                                f"{f:.1%} de la banca (tope {max_pct:.0%})")
-    f = 0.005
-    return round(f * bankroll, 2), f, _es(f"Sin ventaja matemática (valor {ev:+.1%}): si apuestas, que sea ocio, "
-                                           f"como mucho un {f:.1%} de la banca. Pérdida esperada "
-                                           f"{abs(ev) * f * bankroll:.2f} €")
+    if ev >= -0.0005:
+        f = 0.005
+        return round(f * bankroll, 2), f, _es(f"A precio justo (sin ventaja ni margen): como mucho un {f:.1%} de "
+                                               f"la banca")
+    return 0.0, 0.0, _es(f"Valor negativo ({ev:+.1%}): no se recomienda apostar")
 
 
 def _es(txt: str) -> str:
@@ -183,67 +186,141 @@ def _leg_why(r: dict) -> list[str]:
     if r.get("why"):
         return list(r["why"])
     from .stats import price_line
-    return [price_line(float(r["p_final"]), float(r["odds"]), True)]
+    return [price_line(float(r["p_final"]), float(r["odds"]), bool(r.get("priced", True)))]
+
+
+def _grade(r: dict) -> int:
+    """0 = cuota de bet365 confirmada con valor ≥ 0 · 1 = por confirmar (cogerla a la cuota mínima) · 2 = valor < 0."""
+    if r.get("priced", True):
+        return 0 if r["ev"] >= -0.0005 else 2
+    return 1
+
+
+def _options(rows: list[dict], kmax: int, tipo: str) -> list[dict]:
+    """Todas las apuestas posibles (simples y combinadas de 2..kmax patas de partidos distintos, como mucho dos de la
+    misma liga) con su cuota, probabilidad, valor y nivel de confianza en la cuota (grado)."""
+    opts = []
+    if tipo in ("auto", "simple"):
+        for r in rows:
+            opts.append(dict(legs=[r], odds=r["odds"], prob=r["p_final"], ev=r["ev"], grade=_grade(r)))
+    if tipo in ("auto", "combinada"):
+        for k in range(2, kmax + 1):
+            for combo in itertools.combinations(rows, k):
+                if len({x["match_id"] for x in combo}) < k or len({x["league"] for x in combo}) < k - 1:
+                    continue
+                o = prod(x["odds"] for x in combo)
+                if o > 15:
+                    continue
+                p = prod(x["p_final"] for x in combo)
+                opts.append(dict(legs=list(combo), odds=o, prob=p, ev=p * o - 1, grade=max(_grade(x) for x in combo)))
+    return opts
+
+
+def _best(opts: list[dict], key) -> dict | None:
+    return max(opts, key=key) if opts else None
 
 
 def copilot(pool: pd.DataFrame, bankroll: float, deadline: datetime, now: datetime, risk: str = "medio",
             tipo: str = "auto", sports: list[str] | None = None, odds_range: tuple[float, float] | None = None,
             only_good: bool = False, kelly_fraction: float = 0.25, max_pct: float = 0.03
             ) -> tuple[Plan | None, list[Plan], int]:
-    """La mejor apuesta simple o combinada para una banca, un riesgo, unos deportes y una cuota objetivo.
-    Cada plan trae el stake sugerido (Kelly fraccionado o, sin ventaja, como mucho un 0,5 %) y el porqué con datos:
-    probabilidad real frente a la cuota, referencia de mercado, forma, rachas, local/visitante y cara a cara."""
-    c = candidates(pool, now, deadline, sports, False, False)
-    if only_good and not c.empty:
-        c = c[c["tier"].isin(["valor", "solida"])]
+    """Construye la mejor apuesta para una banca, un riesgo, unos deportes y una cuota objetivo.
+
+    Reglas (en este orden):
+      1. La cuota TOTAL siempre dentro del rango pedido (odds_range, o el del riesgo: bajo 1,40-1,90 · medio
+         1,90-2,80 · alto 2,80-5,00).
+      2. Primero, solo cuotas de bet365 confirmadas con valor ≥ 0 (ventaja o precio justo sin margen).
+      3. Si no hay, se añaden las selecciones «por confirmar» (sin cuota de bet365 todavía): se indica la cuota
+         mínima a la que hay que cogerlas para no apostar por debajo del precio justo.
+      4. Nunca se recomienda una apuesta con valor negativo como opción principal. Si nada cumple el filtro, se dice y
+         se muestra la alternativa más cercana, marcada como tal.
+    Devuelve (opción principal, [más conservadora, mayor retorno], nº de selecciones consideradas)."""
+    lo, hi = odds_range or RISK_RANGE.get(risk, RISK_RANGE["medio"])
+    c = candidates(pool, now, deadline, sports, False, True)
     if c.empty:
         return None, [], 0
-    pmin, omin, omax, kmax = COPILOT_RISK[risk]
-    if odds_range:
-        omin, omax = odds_range
+    if "priced" not in c:
+        c = c.assign(priced=c["verified"].astype(bool))
+    c = c.assign(priced=c["priced"].fillna(c["verified"]).astype(bool))
+    if only_good:
+        c = c[(~c["priced"]) | (c["tier"].isin(["valor", "solida", "moderado", "cuota_alta"])) | (c["ev"] >= 0)]
+    c = c.sort_values(["ev", "p_final"], ascending=False).drop_duplicates(["match_id", "label"])
+    # pool de patas: las mejores por partido de cada grado (para que la búsqueda sea rápida)
+    recs = c.to_dict("records")
+    for r in recs:
+        if not r["priced"]:
+            # redondeo hacia arriba: a la cuota mínima indicada nunca se pierde valor (≥ precio justo)
+            r["min_odds"] = ceil(100 / r["p_final"] - 1e-9) / 100
+            r["odds"], r["ev"] = r["min_odds"], r["p_final"] * r["min_odds"] - 1
+    good = [r for r in recs if _grade(r) == 0]
+    pend = [r for r in recs if _grade(r) == 1]
+    bad = [r for r in recs if _grade(r) == 2]
+    kmax = RISK_LEGS.get(risk, 3)
+
+    def top(rows, n=14):
+        best: dict[str, dict] = {}
+        for r in sorted(rows, key=lambda r: (r["ev"], r["p_final"]), reverse=True):
+            best.setdefault(r["match_id"], r)
+        return list(best.values())[:n]
+
+    in_r = lambda o: lo - 1e-9 <= o["odds"] <= hi + 1e-9
+    score = lambda o: (round(o["ev"], 4), o["prob"], -len(o["legs"]))
+    main, status = None, "exacta"
+    for stage, rows in (("exacta", top(good)), ("por_confirmar", top(good) + top(pend))):
+        opts = [o for o in _options(rows, kmax, tipo) if in_r(o)]
+        if opts:
+            main, status = _best(opts, score), stage
+            break
+    all_good = _options(top(good) + top(pend), kmax, tipo)
     plans: list[Plan] = []
-    if tipo in ("auto", "simple"):
-        pool1 = c[(c["odds"] >= omin) & (c["odds"] <= omax) & (c["p_final"] >= min(pmin, 1 / omax))]
-        for _, r in pool1.assign(score=pool1["ev"] + 0.01 * pool1["p_final"]).sort_values(
-                "score", ascending=False).drop_duplicates("match_id").head(3).iterrows():
-            leg = _legs([r])[0]
-            plans.append(Plan("simple", [leg], leg["odds"], leg["p_final"], leg["ev"], [0.0], 0.0))
-    if tipo in ("auto", "combinada"):
-        pool2 = c[(c["p_final"] >= pmin) & (c["odds"] >= 1.15)]
-        pool2 = pool2.sort_values(["ev", "p_final"], ascending=False).drop_duplicates("match_id").head(14)
-        recs = pool2.to_dict("records")
-        found = []
-        for k in range(2, kmax + 1):
-            for combo in itertools.combinations(recs, k):
-                if len({x["league"] for x in combo}) < k - 1:  # como mucho dos de la misma liga
-                    continue
-                o = prod(x["odds"] for x in combo)
-                if not (omin <= o <= omax):
-                    continue
-                p = prod(x["p_final"] for x in combo)
-                found.append((p * o - 1, p, o, combo))
-        found.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        used: set = set()
-        for ev, p, o, combo in found:
-            ids = {x["match_id"] for x in combo}
-            if ids & used:
-                continue
-            plans.append(Plan("combinada", _legs(combo), o, p, ev, [0.0], 0.0))
-            used |= ids
-            if sum(pl.tipo == "combinada" for pl in plans) >= 3:
-                break
-    if not plans:
-        return None, [], len(c)
-    plans.sort(key=lambda pl: (pl.ev, pl.prob), reverse=True)
+    if main is None:  # nada cumple: la alternativa más cercana al rango (preferible sin valor negativo)
+        cand = all_good or _options(top(bad), kmax, tipo)
+        if not cand:
+            return None, [], len(c)
+        dist = lambda o: max(lo - o["odds"], o["odds"] - hi, 0)
+        main = min(cand, key=lambda o: (dist(o), o["grade"], -o["ev"]))
+        status = "cercana"
+    plans.append(_plan(main, "principal" if status != "cercana" else "cercana", status, in_r(main), lo, hi))
+    # alternativas: una más conservadora (menos cuota, más probabilidad) y otra de mayor retorno
+    base = all_good if all_good else []
+    cons = [o for o in base if 1.20 <= o["odds"] < main["odds"] - 1e-9 and o["prob"] > main["prob"]]
+    ret_all = [o for o in base if main["odds"] + 1e-9 < o["odds"] <= max(hi * 1.6, main["odds"] * 1.8)]
+    ret = [o for o in ret_all if o["odds"] >= main["odds"] * 1.25] or ret_all  # retorno claramente mayor si existe
+    pick_c = _best(cons, lambda o: (o["grade"] == 0, round(o["ev"], 4), o["prob"]))
+    pick_r = _best(ret, lambda o: (o["grade"] == 0, round(o["ev"], 4), o["prob"]))
+    if pick_c:
+        plans.append(_plan(pick_c, "conservadora", "exacta" if pick_c["grade"] == 0 else "por_confirmar",
+                           in_r(pick_c), lo, hi))
+    if pick_r:
+        plans.append(_plan(pick_r, "retorno", "exacta" if pick_r["grade"] == 0 else "por_confirmar", in_r(pick_r), lo, hi))
     for pl in plans:
         stake, pct, txt = stake_advice(pl.ev, pl.odds, bankroll, kelly_fraction, max_pct)
         pl.budget, pl.stakes, pl.stake_pct = stake, [stake] * len(pl.legs), pct
-        pl.rationale = [txt, f"Probabilidad real {'conjunta ' if pl.tipo == 'combinada' else ''}{pl.prob:.0%} · "
-                             f"la cuota implica {1 / pl.odds:.0%}"]
+        pl.rationale = [txt] + pl.rationale
         for leg in pl.legs:
-            src = c[(c["match_id"] == leg["match_id"]) & (c["label"] == leg["label"])]
-            leg["why"] = _leg_why(src.iloc[0].to_dict() if not src.empty else {**leg, "n_books": None})
+            leg["why"] = _leg_why(leg)
     return plans[0], plans[1:], len(c)
+
+
+def _plan(o: dict, role: str, status: str, in_range: bool, lo: float, hi: float) -> Plan:
+    legs = _legs(o["legs"])
+    pl = Plan("simple" if len(legs) == 1 else "combinada", legs, o["odds"], o["prob"], o["ev"], [0.0], 0.0,
+              role=role, status=status, in_range=in_range)
+    rng = _es(f"{lo:.2f}-{hi:.2f}")
+    notes = []
+    if status == "cercana":
+        notes.append(_es(f"Ninguna apuesta cumple a la vez tu cuota objetivo ({rng}) y un valor ≥ 0 con lo analizado. "
+                         f"Esta es la alternativa más cercana (cuota {o['odds']:.2f})"
+                         + (", con valor negativo: no se recomienda." if o["ev"] < -0.0005 else ".")))
+    elif status == "por_confirmar":
+        notes.append("Incluye selecciones sin cuota de bet365 todavía: cógelas solo a la cuota mínima indicada (≥) "
+                     "o superior; por debajo, la apuesta deja de tener sentido.")
+    if role in ("conservadora", "retorno") and not in_range:
+        notes.append(_es(f"Fuera de tu rango ({rng}) a propósito: "
+                         + ("menos cuota y más probabilidad." if role == "conservadora" else "más cuota y más retorno.")))
+    pl.rationale = notes + [_es(f"Probabilidad real {'conjunta ' if len(legs) > 1 else ''}{o['prob']:.0%} · la cuota "
+                                f"implica {1 / o['odds']:.0%}")]
+    return pl
 
 
 def default_deadline(now: datetime, days: int = 2) -> datetime:
@@ -263,8 +340,9 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025,
     sel = db.df("""SELECT s.*, s.price AS odds, m.sport, m.league, m.kickoff, m.home, m.away, i.info
                    FROM selections s JOIN matches m ON m.id = s.match_id
                    LEFT JOIN match_info i ON i.match_id = s.match_id
-                   WHERE m.status = 'pendiente' AND m.kickoff > ? AND s.verified = 1 AND s.tier != 'revisar'
-                     AND COALESCE(s.weak, 0) = 0 AND (s.b365_age_h IS NULL OR s.b365_age_h <= ?)""",
+                   WHERE m.status = 'pendiente' AND m.kickoff > ? AND s.tier != 'revisar' AND COALESCE(s.weak, 0) = 0
+                     AND (COALESCE(s.n_books, 0) >= 2 OR COALESCE(s.n_sharp, 0) >= 1)
+                     AND (s.verified = 0 OR s.b365_age_h IS NULL OR s.b365_age_h <= ?)""",
                 (now.isoformat(), max_age_h)) if _has_table(db, "selections") else pd.DataFrame()
     if not sel.empty:
         import json as _json
@@ -272,12 +350,15 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025,
         from .combos import leg_report
         tables = {r["key"][6:]: _json.loads(r["value"]) for r in db.conn.execute(
             "SELECT key, value FROM kv WHERE key LIKE 'tabla_%'").fetchall()}
+        sel["priced"] = sel["verified"].fillna(0).astype(int) == 1
+        sel.loc[~sel["priced"], "odds"] = (1 / sel.loc[~sel["priced"], "p_final"]).round(2)  # cuota mínima = justa
         sel["risk"] = sel["p_final"].map(risk_of)
         sel["confidence"] = "—"
         sel["ev"] = sel["p_final"] * sel["odds"] - 1
         sel["why"] = [leg_report(r, r["sport"], r["market"], r["selection"], float(r["point"]),
                                  _json.loads(r["info"]) if isinstance(r["info"], str) else {}, tables, float(r["p_final"]),
-                                 float(r["odds"]), True, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")))
+                                 float(r["odds"]) if r["priced"] else None, bool(r["priced"]), r.get("n_books"),
+                                 r.get("n_sharp"), bool(r.get("derived")))
                       for r in sel.to_dict("records")]
         return sel.drop(columns=["info"])
     df = db.df("""SELECT p.match_id, p.market, p.selection, p.point, p.p_final, p.p_model, p.p_market,

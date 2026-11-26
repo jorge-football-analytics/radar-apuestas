@@ -17,7 +17,8 @@ from .learn import metrics
 
 ODDS_BANDS = [(0, 1.30, "< 1,30"), (1.30, 1.60, "1,30-1,60"), (1.60, 2.00, "1,60-2,00"), (2.00, 2.60, "2,00-2,60"),
               (2.60, 99, "> 2,60")]
-TRACKED = ("valor", "solida")
+TRACKED = ("valor", "solida", "moderado", "cuota_alta")
+TIER_NAMES = {"valor": "Élite", "solida": "Sólidas", "moderado": "Valor moderado", "cuota_alta": "Cuota alta"}
 
 
 def metrics_since_default() -> str:
@@ -188,19 +189,21 @@ def radar_table(analysis: pd.DataFrame, sport: str | None = None, light: list[st
 
 def day_summary(analysis: pd.DataFrame) -> dict:
     if analysis.empty:
-        return {"partidos": 0, "verde": 0, "ambar": 0, "rojo": 0, "gris": 0, "elite": 0, "solida": 0}
+        return {"partidos": 0, "verde": 0, "ambar": 0, "rojo": 0, "gris": 0, "elite": 0, "solida": 0, "moderado": 0,
+                "cuota_alta": 0}
     lc = analysis["light"].value_counts()
     tc = analysis["tier"].value_counts()
     return {"partidos": len(analysis), **{k: int(lc.get(k, 0)) for k in LIGHT_ORDER},
             "elite": int(tc.get("valor", 0)), "solida": int(tc.get("solida", 0)),
+            "moderado": int(tc.get("moderado", 0)), "cuota_alta": int(tc.get("cuota_alta", 0)),
             "verificar": int(tc.get("verificar", 0)), "revisar": int(tc.get("revisar", 0))}
 
 
 def level_summary(resolved: pd.DataFrame, resolved_combos: pd.DataFrame, bankroll: float = 100.0) -> pd.DataFrame:
     """Una fila por nivel: Élite, Sólidas y cada perfil de combinada, con jugadas, acierto, yield y ROI."""
     rows = []
-    names = {"valor": "Élite", "solida": "Sólidas"}
-    for t in ("valor", "solida"):
+    names = TIER_NAMES
+    for t in TRACKED:
         r = resolved[resolved["tier"] == t] if not resolved.empty else resolved
         k = kpis(r, "unit")
         rows.append(dict(nivel=names[t], **{x: k.get(x) for x in ("n", "hit", "expected", "yield", "profit")},
@@ -212,3 +215,22 @@ def level_summary(resolved: pd.DataFrame, resolved_combos: pd.DataFrame, bankrol
         rows.append(dict(nivel=f"Combinada {prof}", **{x: k.get(x) for x in ("n", "hit", "expected", "yield", "profit")},
                          roi=kpis(r, "stake", bankroll).get("roi")))
     return pd.DataFrame(rows)
+
+
+def confidence_score(p: float, ev: float | None = None, n_books: int | None = None, n_sharp: int | None = None,
+                     priced: bool = True, age_h: float | None = None, derived: bool = False) -> int:
+    """Confianza 0-100 en la recomendación (para el velocímetro). Mide la solidez de la estimación, no la
+    probabilidad de ganar: referencia sharp, número de casas válidas, cuota de bet365 confirmada y reciente,
+    margen frente al precio justo, probabilidad y si el mercado es directo o derivado."""
+    def ok(x):
+        return x is not None and not (isinstance(x, float) and pd.isna(x))
+    sc = 0.0
+    sc += 25 if ok(n_sharp) and n_sharp >= 1 else 0
+    sc += 15 * min(1.0, (n_books or 0) / 4) if ok(n_books) else 0
+    sc += 20 if priced else 0
+    sc -= 10 if ok(age_h) and age_h > 24 else 0
+    if ok(ev):
+        sc += 25 * min(1.0, max(0.0, (ev + 0.03) / 0.08))
+    sc += 15 * min(1.0, max(0.0, (p - 0.25) / 0.5)) if ok(p) else 0
+    sc -= 10 if derived else 0
+    return int(round(min(100, max(0, sc))))

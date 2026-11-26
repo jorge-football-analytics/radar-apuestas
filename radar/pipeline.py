@@ -23,7 +23,8 @@ from .model.markets import market_probs
 from .sources import espn
 from .sources import football_data as fd
 from .sources import tennis_data
-from .sources.injuries import absence_factor, fetch_api_football, load_manual
+from .sources.injuries import absence_factor
+from .sources.injuries import collect as collect_injuries
 from .sources.odds_api import OddsAPI
 from .sources.oddspapi import OddsPapi
 from . import tables
@@ -47,6 +48,7 @@ class Ctx:
     us_hist: dict = field(default_factory=dict)
     us_elo: dict = field(default_factory=dict)
     diag: dict = field(default_factory=dict)  # estado de cada fuente para la web
+    injury_status: dict = field(default_factory=dict)  # liga → (fuente de bajas o None, nota)
 
 
 # ------------------------------------------------------------------ datos y modelos
@@ -247,21 +249,20 @@ def football_data_timestamp(db: DB, f: pd.DataFrame, now: datetime) -> str:
     return db.get("fd_fixtures_ts")
 
 
-def _absences(s: Settings, db: DB, upcoming: pd.DataFrame, ctx: Ctx, now: datetime) -> dict:
-    out: dict = defaultdict(list)
-    for (lg, team), lst in load_manual(now.date()).items():
-        out[(lg, team)] += lst
-    fb = upcoming[upcoming["sport"] == "football"]
-    for lg, g in fb.groupby("league"):
-        if lg not in FOOTBALL:
-            continue
-        for team, lst in fetch_api_football(s, db, lg, {k[:10] for k in g["kickoff"]}, ctx.fb_known.get(lg, []),
-                                            now.date()).items():
-            out[(lg, team)] += lst
-    return out
+def _absences(s: Settings, db: DB, upcoming: pd.DataFrame, ctx: Ctx, now: datetime):
+    """Bajas de los partidos próximos (API-Football por fecha, ESPN en NBA/NFL, CSV manual) y estado por liga."""
+    ms = [dict(m, sport=m.get("sport") or sport_of(m["league"])) for m in upcoming.to_dict("records")]
+    ms = [m for m in ms if pd.Timestamp(m["kickoff"]) < pd.Timestamp(now) + pd.Timedelta(hours=HORIZON_H)]
+    absences, status = collect_injuries(s, db, ms, ctx.fb_known, now.date())
+    ok = sorted({src for src, _ in status.values() if src})
+    notes = sorted({n for src, n in status.values() if not src and "tenis" not in n})
+    ctx.diag["Bajas y lesiones"] = dict(ok=bool(ok), filas=sum(len(v) for v in absences.values()),
+                                        detalle=("fuentes: " + ", ".join(ok) if ok else "") +
+                                        ("; " if ok and notes else "") + "; ".join(notes))
+    ctx.injury_status = status
+    return absences
 
 
-# ------------------------------------------------------------------ análisis
 def model_for(m: dict, o: pd.DataFrame, ctx: Ctx, absences: dict, s: Settings, now: datetime):
     sport, league = m["sport"], m["league"]
     notes: list[str] = []
@@ -343,6 +344,10 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         st = match_stats(results.get(m["sport"]), m["home"], m["away"], now, draws=m["sport"] == "football")
         if st:
             info = {**(info or {}), "stats": st}
+        src, note = ctx.injury_status.get(m["league"], (None, "sin fuente de bajas para esta competición"))
+        info = {**(info or {}), "bajas": {"local": absences.get((m["league"], m["home"]), []),
+                                          "visit": absences.get((m["league"], m["away"]), []),
+                                          "fuente": src, "nota": note}}
         if info:
             infos[m["id"]] = info
         if o.empty:
@@ -425,7 +430,7 @@ def save_picks(db: DB, candidates: list, ts: str, now: datetime) -> list[dict]:
                         tier=r["tier"], elite=r["elite"], verified=r["verified"], min_odds=r["min_odds"],
                         score=r["score"], label=r["label"], updated=ts, current_odds=r["odds"], current_ev=r["ev"],
                         active=1)
-            lock = r["tier"] in ("valor", "solida")  # lo que se recomienda queda registrado tal cual
+            lock = r["tier"] in TRACKED_TIERS  # lo que se recomienda queda registrado tal cual
             if ex is None:
                 vals.update(locked=int(lock), shown_at=ts if lock else None)
                 cols = ["created", "match_id", "league", "kickoff", "home", "away", "market", "selection", "point",
@@ -454,7 +459,8 @@ def save_picks(db: DB, candidates: list, ts: str, now: datetime) -> list[dict]:
     return changed
 
 
-TIER_ORDER = {"valor": 0, "solida": 1, "verificar": 2, "revisar": 3, "pronostico": 4}
+TRACKED_TIERS = ("valor", "solida", "moderado", "cuota_alta")
+TIER_ORDER = {"valor": 0, "cuota_alta": 1, "solida": 2, "moderado": 3, "verificar": 4, "revisar": 5, "pronostico": 6}
 MAIN_MARKET = {"football": "1x2"}
 
 
@@ -488,7 +494,7 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
         g = g.dropna(subset=["tier"]).assign(_o=lambda d: d["tier"].map(TIER_ORDER).fillna(9))
         top = g.sort_values("_o").iloc[0]["tier"]
         cand = g[g["tier"] == top]
-        if top == "valor":
+        if top in ("valor", "cuota_alta", "moderado"):
             r = cand.sort_values("ev", ascending=False).iloc[0]
         elif top == "solida":
             r = cand.sort_values("p_final", ascending=False).iloc[0]
@@ -507,6 +513,10 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
             light, rec = "verde", f"Élite: apostar · valor {fp(ev, True)}"
         elif top == "solida":
             light, rec = "verde", f"Sólida: {p:.0%} de probabilidad a precio justo · apta para combinadas"
+        elif top == "cuota_alta":
+            light, rec = "verde", f"Cuota alta: bet365 paga un {fp(ev, True)} sobre el precio justo · riesgo controlado"
+        elif top == "moderado":
+            light, rec = "verde", f"Valor moderado: ventaja ligera de {fp(ev, True)} sobre el precio justo"
         elif top == "verificar":
             light, rec = "ambar", f"Por confirmar: apostar solo si bet365 paga {r['min_odds']:.2f} o más".replace(".", ",")
         elif top == "revisar":
@@ -733,7 +743,8 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     summary = dict(partidos=len(matches), por_deporte=dict(Counter(m["sport"] for m in matches.values())),
                    cuotas=n_odds, liquidados=n_settled, valor=tiers.get("valor", 0),
                    verificar=tiers.get("verificar", 0), pronosticos=tiers.get("pronostico", 0),
-                   solidas=tiers.get("solida", 0), revisar=tiers.get("revisar", 0),
+                   solidas=tiers.get("solida", 0), moderadas=tiers.get("moderado", 0),
+                   cuota_alta=tiers.get("cuota_alta", 0), revisar=tiers.get("revisar", 0),
                    elite=sum(c.elite for c in candidates), combinadas=len(combos), avisos=sent, pesos=weights,
                    creditos_odds_api=db.get("odds_api_remaining"),
                    oddspapi_mes=db.get(f"oddspapi_used_{now:%Y-%m}", 0))
