@@ -152,14 +152,15 @@ def default_deadline(now: datetime, days: int = 2) -> datetime:
     return now + timedelta(days=days)
 
 
-def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.03) -> pd.DataFrame:
-    """Todas las selecciones futuras con cuota de bet365 y probabilidad estimada (no solo las de la portada)."""
+def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025, solid_min_prob: float = 0.65,
+                 solid_min_ev: float = -0.005, max_age_h: float = 72) -> pd.DataFrame:
+    """Todas las selecciones futuras con cuota de bet365 (de menos de max_age_h horas) y probabilidad estimada."""
     from .config import SPORTS
     from .model.markets import label
     from .value import risk_of
 
     df = db.df("""SELECT p.match_id, p.market, p.selection, p.point, p.p_final, p.p_model, p.p_market,
-                         o.price AS odds, o.first_price, m.sport, m.league, m.kickoff, m.home, m.away
+                         o.price AS odds, o.first_price, o.fetched_at, m.sport, m.league, m.kickoff, m.home, m.away
                   FROM predictions p
                   JOIN odds o ON o.match_id = p.match_id AND o.market = p.market AND o.selection = p.selection
                              AND o.point = p.point AND o.bookmaker = ?
@@ -168,10 +169,15 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.03) 
                (book, now.isoformat()))
     if df.empty:
         return df
+    t = pd.to_datetime(df["fetched_at"], utc=True, format="ISO8601", errors="coerce")
+    df = df[t.isna() | (t >= pd.Timestamp(now) - pd.Timedelta(hours=max_age_h))]
+    if df.empty:
+        return df
     df["label"] = [label(r.market, r.selection, r.point, r.home, r.away, SPORTS.get(r.sport, SPORTS["football"])["unidad"])
                    for r in df.itertuples()]
     df["ev"] = df["p_final"] * df["odds"] - 1
-    df["tier"] = df["ev"].map(lambda e: "valor" if e >= min_ev else "pronostico")
+    df["tier"] = ["valor" if e >= min_ev else "solida" if (p >= solid_min_prob and e >= solid_min_ev) else "pronostico"
+                  for e, p in zip(df["ev"], df["p_final"])]
     df["risk"] = df["p_final"].map(risk_of)
     df["verified"] = 1
     df["confidence"] = "—"

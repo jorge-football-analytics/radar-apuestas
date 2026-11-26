@@ -177,6 +177,12 @@ class Settings:
     # OddsPapi (cuotas reales de bet365 para tenis, NBA, NFL y copas europeas). Plan gratis: 250 peticiones/mes
     oddspapi_monthly: int = field(default_factory=lambda: _i("ODDSPAPI_MONTHLY", 250))
     oddspapi_reserve: int = field(default_factory=lambda: _i("ODDSPAPI_RESERVE", 10))
+    # Ventana de partidos que se consultan (la API exige < 48 h cuando se busca por deporte y fechas)
+    oddspapi_window_h: float = field(default_factory=lambda: _f("ODDSPAPI_WINDOW_H", 47))
+    # Casas que se piden en cada consulta de cuotas (misma llamada = mismas horas → comparables)
+    oddspapi_books: str = field(default_factory=lambda: os.getenv("ODDSPAPI_BOOKS", "bet365,pinnacle"))
+    # Cada cuánto se renueva la lista de partidos de un deporte (1 consulta por deporte)
+    oddspapi_fixtures_ttl_h: float = field(default_factory=lambda: _f("ODDSPAPI_FIXTURES_TTL_H", 12))
 
     # Modelo
     seasons_history: int = field(default_factory=lambda: _i("SEASONS_HISTORY", 4))
@@ -188,18 +194,42 @@ class Settings:
     book: str = field(default_factory=lambda: os.getenv("BOOK", "bet365"))
 
     # Jugadas de valor (web)
-    min_ev: float = field(default_factory=lambda: _f("MIN_EV", 0.03))
-    min_prob: float = field(default_factory=lambda: _f("MIN_PROB", 0.25))
-    max_odds: float = field(default_factory=lambda: _f("MAX_ODDS", 6.0))
-    min_books: int = field(default_factory=lambda: _i("MIN_BOOKS", 3))
+    # Nivel 1 · Élite: valor esperado claro contra el precio justo limpio
+    min_ev: float = field(default_factory=lambda: _f("MIN_EV", 0.025))
+    min_prob: float = field(default_factory=lambda: _f("MIN_PROB", 0.30))
+    # Rango de cuotas en el que se recomienda algo (fuera de él, solo información)
+    min_odds: float = field(default_factory=lambda: _f("MIN_ODDS", 1.30))
+    max_odds: float = field(default_factory=lambda: _f("MAX_ODDS", 2.60))
+    # Nivel 2 · Sólida: alta probabilidad y bet365 paga al menos el precio justo (sin regalar margen)
+    solid_min_prob: float = field(default_factory=lambda: _f("SOLID_MIN_PROB", 0.65))
+    solid_min_ev: float = field(default_factory=lambda: _f("SOLID_MIN_EV", -0.005))
+    # Las sólidas son informativas (no van a Telegram): admiten cuotas de bet365 de hasta 72 h, avisando de la hora
+    solid_b365_max_age_h: float = field(default_factory=lambda: _f("SOLID_B365_MAX_AGE_H", 72))
+    # casas VÁLIDAS (mercado completo, margen razonable, misma hora que bet365) sin contar bet365
+    min_books: int = field(default_factory=lambda: _i("MIN_BOOKS", 2))
+    # Valor esperado por encima de esto = casi seguro un error de datos → 'revisar', apuesta 0
+    max_ev: float = field(default_factory=lambda: _f("MAX_EV", 0.15))
+
+    # Limpieza de cuotas
+    max_overround: float = field(default_factory=lambda: _f("MAX_OVERROUND", 1.12))  # casas normales
+    max_overround_b365: float = field(default_factory=lambda: _f("MAX_OVERROUND_B365", 1.15))
+    exchange_overround: tuple = (0.99, 1.04)  # exchanges: casi sin margen
+    # Las cuotas del consenso deben ser de ±N horas respecto a la de bet365 (si no, no se comparan)
+    max_odds_gap_h: float = field(default_factory=lambda: _f("MAX_ODDS_GAP_H", 6))
+    # Cuota de bet365 más vieja que esto → 'verificar' (puede haber cambiado), no 'valor'
+    b365_max_age_h: float = field(default_factory=lambda: _f("B365_MAX_AGE_H", 24))
+    # Deportes en los que el modelo NO mueve la probabilidad (peso 0) hasta que el backtest lo justifique
+    frozen_model_sports: str = field(default_factory=lambda: os.getenv("FROZEN_MODEL_SPORTS", "football,tennis"))
+    # Recalibración en vivo: mínimo de predicciones resueltas para mover el peso del backtest
+    recal_min_n: int = field(default_factory=lambda: _i("RECAL_MIN_N", 2000))
 
     # Filtro élite (Telegram)
-    alert_ev: float = field(default_factory=lambda: _f("ALERT_EV", 0.05))
-    alert_min_prob: float = field(default_factory=lambda: _f("ALERT_MIN_PROB", 0.33))
+    alert_ev: float = field(default_factory=lambda: _f("ALERT_EV", 0.03))
+    alert_min_prob: float = field(default_factory=lambda: _f("ALERT_MIN_PROB", 0.38))
     alert_odds_min: float = field(default_factory=lambda: _f("ALERT_ODDS_MIN", 1.30))
-    alert_odds_max: float = field(default_factory=lambda: _f("ALERT_ODDS_MAX", 4.0))
+    alert_odds_max: float = field(default_factory=lambda: _f("ALERT_ODDS_MAX", 2.60))
     alert_max_day: int = field(default_factory=lambda: _i("ALERT_MAX_DAY", 5))
-    alert_combo_ev: float = field(default_factory=lambda: _f("ALERT_COMBO_EV", 0.08))
+    alert_combo_ev: float = field(default_factory=lambda: _f("ALERT_COMBO_EV", 0.05))
     daily_digest: bool = field(default_factory=lambda: _b("DAILY_DIGEST", True))
 
     # Gestión de banca
@@ -208,12 +238,19 @@ class Settings:
     max_stake_pct: float = field(default_factory=lambda: _f("MAX_STAKE_PCT", 0.03))
 
     max_combo_legs: int = field(default_factory=lambda: _i("MAX_COMBO_LEGS", 4))
+    combo_min_ev: float = field(default_factory=lambda: _f("COMBO_MIN_EV", 0.02))        # combinada 'valor'
+    combo_solid_min_ev: float = field(default_factory=lambda: _f("COMBO_SOLID_MIN_EV", -0.015))  # combinada 'sólida'
+    combo_max_per_league: int = field(default_factory=lambda: _i("COMBO_MAX_PER_LEAGUE", 1))
 
     db_path: Path = field(default_factory=lambda: Path(os.getenv("RADAR_DB", DATA_DIR / "radar.db")))
 
     @property
     def active_sports(self) -> set[str]:
         return {x.strip() for x in self.sports.split(",") if x.strip()}
+
+    @property
+    def frozen_sports(self) -> set[str]:
+        return {x.strip() for x in self.frozen_model_sports.split(",") if x.strip()}
 
     def can_bet(self, book: str) -> bool:
         return book == self.book

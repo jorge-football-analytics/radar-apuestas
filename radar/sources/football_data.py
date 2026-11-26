@@ -94,8 +94,10 @@ def load_new_history(today: date, seasons: int, leagues: list[str] | None = None
         if d.empty or "Home" not in d:
             continue
         d = d.rename(columns={"Home": "HomeTeam", "Away": "AwayTeam", "HG": "FTHG", "AG": "FTAG"})
-        # en estas ligas solo hay cuotas de cierre: sirven como 'apertura' para el backtest
-        for pre in ("PS", "B365", "Avg", "Max"):
+        # En estas ligas solo hay cuotas de CIERRE. Antes se copiaban como 'apertura' de Pinnacle/media y el backtest
+        # se evaluaba contra la línea de cierre (información del futuro). Ahora solo se copia bet365 (precio de
+        # referencia para mostrar); sin apertura de Pinnacle, el backtest simplemente no usa estas filas.
+        for pre in ("B365", "Max"):
             for sel in "HDA":
                 if f"{pre}C{sel}" in d and f"{pre}{sel}" not in d:
                     d[f"{pre}{sel}"] = d[f"{pre}C{sel}"]
@@ -116,19 +118,24 @@ def tidy_history(raw: pd.DataFrame) -> pd.DataFrame:
         "hg": raw["FTHG"].astype(int), "ag": raw["FTAG"].astype(int),
     })
     # cuotas útiles para backtest / CLV (si existen)
+    # Referencia de mercado: Pinnacle y, si falta, la media de casas. NUNCA bet365: si no, el backtest compara
+    # bet365 consigo mismo y el CLV se mide contra el cierre de la propia casa donde se apuesta.
     keep = {
-        "open_H": ["PSH", "B365H", "AvgH"], "open_D": ["PSD", "B365D", "AvgD"], "open_A": ["PSA", "B365A", "AvgA"],
-        "close_H": ["PSCH", "B365CH", "AvgCH"], "close_D": ["PSCD", "B365CD", "AvgCD"], "close_A": ["PSCA", "B365CA", "AvgCA"],
+        "open_H": ["PSH", "AvgH"], "open_D": ["PSD", "AvgD"], "open_A": ["PSA", "AvgA"],
+        "close_H": ["PSCH", "AvgCH"], "close_D": ["PSCD", "AvgCD"], "close_A": ["PSCA", "AvgCA"],
+        # cierre de Pinnacle puro (lo único que cuenta para el CLV)
+        "pin_close_H": ["PSCH"], "pin_close_D": ["PSCD"], "pin_close_A": ["PSCA"],
+        "pin_close_O25": ["PC>2.5"], "pin_close_U25": ["PC<2.5"],
         "b365_H": ["B365H"], "b365_D": ["B365D"], "b365_A": ["B365A"],
         "max_H": ["MaxH"], "max_D": ["MaxD"], "max_A": ["MaxA"],
-        "open_O25": ["P>2.5", "B365>2.5", "Avg>2.5"], "open_U25": ["P<2.5", "B365<2.5", "Avg<2.5"],
-        "close_O25": ["PC>2.5", "B365C>2.5", "AvgC>2.5"], "close_U25": ["PC<2.5", "B365C<2.5", "AvgC<2.5"],
+        "open_O25": ["P>2.5", "Avg>2.5"], "open_U25": ["P<2.5", "Avg<2.5"],
+        "close_O25": ["PC>2.5", "AvgC>2.5"], "close_U25": ["PC<2.5", "AvgC<2.5"],
         "max_O25": ["Max>2.5"], "max_U25": ["Max<2.5"],
         "b365_O25": ["B365>2.5"], "b365_U25": ["B365<2.5"],
     }
     for col, candidates in keep.items():
         s = pd.Series(float("nan"), index=raw.index)
-        for c in candidates:  # primera columna disponible con valor (Pinnacle > bet365 > media)
+        for c in candidates:  # primera columna disponible con valor (Pinnacle > media)
             if c in raw:
                 s = s.fillna(pd.to_numeric(raw[c], errors="coerce"))
         out[col] = s

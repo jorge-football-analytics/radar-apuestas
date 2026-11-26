@@ -95,7 +95,8 @@ def _american_to_decimal(v) -> float | None:
 
 
 def _odds_rows(comp: dict, base: dict) -> list[dict]:
-    """Cuotas de ESPN BET/DraftKings que trae el marcador de ESPN. Sirven de referencia de mercado."""
+    """Cuotas de ESPN BET/DraftKings que trae el marcador de ESPN. Sirven de referencia de mercado.
+    Si falta la cuota de un lado NO se inventa (antes se rellenaba con 1,91 y entraba en el consenso como una casa)."""
     rows = []
     for od in comp.get("odds") or []:
         book = "espn_" + str((od.get("provider") or {}).get("name", "bet")).lower().replace(" ", "")
@@ -115,9 +116,9 @@ def _odds_rows(comp: dict, base: dict) -> list[dict]:
                 sp = float(spread)
                 ps = od.get("pointSpread") or {}
                 hs = _american_to_decimal(((ps.get("home") or {}).get("close") or {}).get("odds")) or \
-                    _american_to_decimal((od.get("homeTeamOdds") or {}).get("spreadOdds")) or 1.91
+                    _american_to_decimal((od.get("homeTeamOdds") or {}).get("spreadOdds"))
                 as_ = _american_to_decimal(((ps.get("away") or {}).get("close") or {}).get("odds")) or \
-                    _american_to_decimal((od.get("awayTeamOdds") or {}).get("spreadOdds")) or 1.91
+                    _american_to_decimal((od.get("awayTeamOdds") or {}).get("spreadOdds"))
                 add("spread", "H", sp, hs)
                 add("spread", "A", sp, as_)
             except (TypeError, ValueError):
@@ -127,9 +128,9 @@ def _odds_rows(comp: dict, base: dict) -> list[dict]:
             try:
                 tot = od.get("total") or {}
                 o = _american_to_decimal(((tot.get("over") or {}).get("close") or {}).get("odds")) or \
-                    _american_to_decimal(od.get("overOdds")) or 1.91
+                    _american_to_decimal(od.get("overOdds"))
                 u = _american_to_decimal(((tot.get("under") or {}).get("close") or {}).get("odds")) or \
-                    _american_to_decimal(od.get("underOdds")) or 1.91
+                    _american_to_decimal(od.get("underOdds"))
                 add("ou", "O", float(ou), o)
                 add("ou", "U", float(ou), u)
             except (TypeError, ValueError):

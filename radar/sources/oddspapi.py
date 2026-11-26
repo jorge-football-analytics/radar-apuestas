@@ -1,26 +1,42 @@
-"""OddsPapi: la única fuente gratuita con cuotas de bet365 para tenis, NBA, NFL y copas europeas.
-Plan gratis: 250 peticiones/mes → solo se usa para CONFIRMAR la cuota de bet365 de los mejores candidatos.
+"""OddsPapi: cuotas de bet365 (y de Pinnacle EN LA MISMA LLAMADA) para tenis, NBA, NFL, copas y fútbol sin bet365 fresco.
+Plan gratis: 250 peticiones/mes → solo se usa para CONFIRMAR los mejores candidatos de las próximas 48 h.
 
-Estructura (v4): /tournaments?sportId → /fixtures?tournamentId&from&to → /odds?fixtureId&bookmakers=bet365
-respuesta de /odds: bookmakerOdds[bookmaker].markets[marketId].outcomes[outcomeId].players["0"].price
-Catálogo de mercados: /markets?sportId (marketType, period, handicap, outcomes[outcomeId, outcomeName]).
+Coste por ejecución (v2, sin listas de torneos):
+  /fixtures?sportId&from&to&statusId=0&hasOdds=true&bookmakers=bet365   1 petición por deporte, cacheada 12 h.
+      Ventana < 48 h (la API lo exige si se filtra solo por deporte y fechas). Trae nombres de participantes,
+      torneo y país, así que NO hace falta /tournaments (antes: miles de torneos y 1-2 peticiones por liga).
+  /odds?fixtureId&bookmakers=bet365,pinnacle                              1 petición por partido.
+      Las dos casas salen de la misma respuesta: misma hora → la comparación bet365 vs Pinnacle es válida.
+  /markets?sportId                                                        1 petición por deporte cada 30 días.
+Límite de ritmo: ≥ 2 s entre llamadas a /fixtures (1 s en el resto).
+respuesta de /odds: bookmakerOdds[slug].markets[marketId].outcomes[outcomeId].players["0"].price
 Todo es defensivo: si la API cambia o falla, el radar sigue funcionando sin esta fuente."""
 from __future__ import annotations
 
 import calendar
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
-from ..config import FOOTBALL, OTHER, Settings, sport_of
+from ..config import Settings, sport_of
 from ..db import DB
-from ..teams import match_team, norm, player_key, us_key
+from ..teams import match_team, player_key, us_key
 
 log = logging.getLogger(__name__)
 BASE = "https://api.oddspapi.io/v4"
 SPORT_ID = {"football": 10, "basketball": 11, "tennis": 12, "nfl": 14}
+FIXTURE_FIELDS = ("fixtureId", "participant1Name", "participant2Name", "startTime", "tournamentName", "categoryName")
+
+
+def _parse_time(st, tz=timezone.utc) -> datetime | None:
+    try:
+        if isinstance(st, (int, float)):
+            return datetime.fromtimestamp(st, tz)
+        return datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 class OddsPapi:
@@ -43,8 +59,8 @@ class OddsPapi:
         days_left = calendar.monthrange(now.year, now.month)[1] - now.day + 1
         return int(max(0, left / max(days_left, 1) - today))
 
-    def _get(self, path: str, now: datetime, **params):
-        wait = 1.1 - (time.time() - self._last_call)
+    def _get(self, path: str, now: datetime, min_gap: float = 1.1, **params):
+        wait = min_gap - (time.time() - self._last_call)
         if wait > 0:
             time.sleep(wait)
         params["apiKey"] = self.s.oddspapi_key
@@ -95,34 +111,23 @@ class OddsPapi:
                         out[str(o["outcomeId"])] = ("ou", "U", hcp)
         return out
 
-    # ------------------------------------------------------------ fixtures
-    def _tournament_ids(self, league: str, sport: str, now: datetime) -> list[int]:
-        tours = self._cached(f"op_tournaments_{sport}", 24, now, "/tournaments", sportId=SPORT_ID[sport])
-        if not isinstance(tours, list):
-            return []
-        if sport == "tennis":
-            parts = league.split("_")
-            tour = parts[1].upper()  # ATP / WTA
-            words = [w for w in parts[2:] if len(w) > 2]
-            want = lambda t: tour in str(t.get("categoryName", "")).upper() and any(
-                w in norm(str(t.get("tournamentName", ""))) for w in words)
-        else:
-            info = FOOTBALL.get(league) or OTHER.get(league) or {}
-            kw = info.get("oddspapi") or norm(info.get("nombre", league))
-            country = norm(info.get("country", ""))
-            want = lambda t: (kw in norm(str(t.get("tournamentName", ""))) or norm(str(t.get("tournamentName", ""))) in kw) \
-                and "women" not in norm(str(t.get("tournamentName", ""))) \
-                and (not country or country in norm(str(t.get("categoryName", ""))))
-        return [t["tournamentId"] for t in tours if want(t) and t.get("futureFixtures", 1)][:2]
-
-    def _fixtures(self, league: str, sport: str, now: datetime) -> list[dict]:
-        out = []
-        for tid in self._tournament_ids(league, sport, now):
-            data = self._cached(f"op_fix_{tid}_{now:%Y-%m-%d}", 12, now, "/fixtures", tournamentId=tid,
-                                **{"from": now.strftime("%Y-%m-%d"),
-                                   "to": (now + timedelta(days=3)).strftime("%Y-%m-%d")})
-            out += data if isinstance(data, list) else []
-        return out
+    # ------------------------------------------------------------ partidos de las próximas horas
+    def upcoming_fixtures(self, sport: str, now: datetime) -> list[dict]:
+        """Partidos de un deporte que empiezan en la ventana y tienen cuota de bet365: 1 petición cada 12 h."""
+        key = f"op_upcoming_{sport}"
+        c = self.db.get(key)
+        if c and (now - datetime.fromisoformat(c["ts"])).total_seconds() < self.s.oddspapi_fixtures_ttl_h * 3600:
+            return c["data"]
+        end = now + timedelta(hours=min(self.s.oddspapi_window_h, 47.5))
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        data = self._get("/fixtures", now, min_gap=2.1, sportId=SPORT_ID[sport],
+                         **{"from": now.astimezone(timezone.utc).strftime(fmt),
+                            "to": end.astimezone(timezone.utc).strftime(fmt)},
+                         statusId=0, hasOdds="true", bookmakers=self.s.book)
+        fx = [{k: f.get(k) for k in FIXTURE_FIELDS} for f in (data if isinstance(data, list) else [])]
+        self.db.set(key, {"ts": now.isoformat(), "data": fx})
+        log.info("OddsPapi: %d partidos de %s con bet365 en las próximas horas", len(fx), sport)
+        return fx
 
     @staticmethod
     def _same(a: str, b: str, sport: str) -> bool:
@@ -134,18 +139,15 @@ class OddsPapi:
 
     def find_fixture(self, match: dict, now: datetime) -> tuple[str, bool] | None:
         """(fixtureId, invertido) del partido, o None."""
-        sport = sport_of(match["league"])
+        sport = match.get("sport") or sport_of(match["league"])
+        if sport not in SPORT_ID:
+            return None
         ko = datetime.fromisoformat(match["kickoff"])
-        for f in self._fixtures(match["league"], sport, now):
-            st = f.get("startTime")
-            try:
-                t = datetime.fromtimestamp(st, ko.tzinfo) if isinstance(st, (int, float)) else datetime.fromisoformat(
-                    str(st).replace("Z", "+00:00"))
-            except (ValueError, TypeError):
+        for f in self.upcoming_fixtures(sport, now):
+            t = _parse_time(f.get("startTime"), ko.tzinfo or timezone.utc)
+            if t is None or abs((t - ko).total_seconds()) > 6 * 3600:
                 continue
-            if abs((t - ko).total_seconds()) > 6 * 3600:
-                continue
-            p1, p2 = str(f.get("participant1Name", "")), str(f.get("participant2Name", ""))
+            p1, p2 = str(f.get("participant1Name") or ""), str(f.get("participant2Name") or "")
             if self._same(p1, match["home"], sport) and self._same(p2, match["away"], sport):
                 return str(f["fixtureId"]), False
             if self._same(p2, match["home"], sport) and self._same(p1, match["away"], sport):
@@ -153,11 +155,11 @@ class OddsPapi:
         return None
 
     # ------------------------------------------------------------ cuotas
-    def bet365_odds(self, match: dict, now: datetime) -> list[dict]:
-        """Filas de cuotas de bet365 (mismo formato que el resto de fuentes) para un partido."""
+    def match_odds(self, match: dict, now: datetime) -> list[dict]:
+        """Filas de cuotas de bet365 y de las casas sharp (ODDSPAPI_BOOKS) de UNA misma consulta, con la misma hora."""
         if not self.enabled:
             return []
-        sport = sport_of(match["league"])
+        sport = match.get("sport") or sport_of(match["league"])
         try:
             fx = self.find_fixture(match, now)
             if not fx:
@@ -165,13 +167,26 @@ class OddsPapi:
                 return []
             fid, swapped = fx
             mmap = self.market_map(sport, now)
-            data = self._get("/odds", now, fixtureId=fid, bookmakers=self.s.book)
+            data = self._get("/odds", now, fixtureId=fid, bookmakers=self.s.oddspapi_books)
         except (requests.RequestException, ValueError, KeyError) as e:
             log.warning("OddsPapi: %s", e)
             return []
-        book = (data.get("bookmakerOdds") or {}).get(self.s.book) if isinstance(data, dict) else None
-        rows = []
-        for mid, m in ((book or {}).get("markets") or {}).items():
+        return parse_match_odds(data, mmap, match, sport, swapped, self.s.book, now)
+
+    bet365_odds = match_odds  # nombre antiguo
+
+
+def parse_match_odds(data, mmap: dict, match: dict, sport: str, swapped: bool, book: str, now: datetime) -> list[dict]:
+    rows = []
+    books = (data.get("bookmakerOdds") or {}) if isinstance(data, dict) else {}
+    stamp = now.isoformat()
+    for slug, bk in books.items():
+        if not isinstance(bk, dict) or bk.get("suspended") or bk.get("bookmakerIsActive") is False:
+            continue
+        name = str(slug).split("+")[0].replace("-", "_")  # 'pinnacle+30' → pinnacle, 'betfair-ex' → betfair_ex
+        for _, m in (bk.get("markets") or {}).items():
+            if not isinstance(m, dict) or m.get("marketActive") is False:
+                continue
             for oid, o in (m.get("outcomes") or {}).items():
                 key = mmap.get(str(oid))
                 pl = (o.get("players") or {}).get("0") or {}
@@ -182,6 +197,6 @@ class OddsPapi:
                 if swapped and sel in "HA":
                     sel = "A" if sel == "H" else "H"
                 rows.append(dict(sport=sport, league=match["league"], kickoff=match["kickoff"], home=match["home"],
-                                 away=match["away"], source="oddspapi", bookmaker=self.s.book, market=market,
-                                 selection=sel, point=pt, price=float(price)))
-        return rows
+                                 away=match["away"], source="oddspapi", bookmaker=book if name == book else name,
+                                 market=market, selection=sel, point=pt, price=float(price), fetched_at=stamp))
+    return rows

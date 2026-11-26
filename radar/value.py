@@ -1,21 +1,27 @@
 """Evaluación de cada selección SOLO con la cuota de bet365.
 
-La probabilidad sale de mezclar el modelo propio con el consenso del mercado sin margen (Pinnacle pesa doble).
-Niveles:
-  valor      → cuota de bet365 confirmada y valor esperado ≥ MIN_EV
-  verificar  → no tenemos la cuota de bet365, pero el resto del mercado sugiere valor: se indica la cuota mínima
+La probabilidad de referencia es el mercado sin margen, calculado SOLO con casas válidas (mercado completo, margen
+creíble y cuotas tomadas a la misma hora que la de bet365). Si hay casas sharp (Pinnacle, exchanges) se usan solo
+ellas. bet365 nunca entra en su propio consenso. El modelo propio solo pesa en los deportes no congelados.
+Niveles (todos con cuota entre MIN_ODDS y MAX_ODDS, por defecto 1,30-2,60):
+  valor      → «Élite» en la web. Cuota de bet365 confirmada, reciente y coherente, valor esperado entre MIN_EV y MAX_EV
+  solida     → «Sólida». Probabilidad ≥ SOLID_MIN_PROB y bet365 paga al menos el precio justo limpio
+               (valor esperado ≥ SOLID_MIN_EV, −0,5 %). No es ventaja: es no regalar margen. Base de las combinadas
+  verificar  → falta la cuota de bet365 (o es vieja) y el resto del mercado sugiere valor: se indica la cuota mínima
+  revisar    → valor esperado > MAX_EV: casi siempre es un error de datos. Nunca se apuesta (stake 0)
   pronostico → la mejor opción del partido aunque no tenga ventaja (información, no recomendación)
-élite (Telegram) → 'valor' + confianza alta + EV ≥ ALERT_EV + cuota y probabilidad razonables
+Telegram (elite=1) → 'valor' + referencia sharp (Pinnacle/exchange) + EV ≥ ALERT_EV + cuota y probabilidad razonables
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
 from .config import DEFAULT_WEIGHT, SPORTS, Settings, sport_of
-from .model.markets import SHARP, label, market_fair_probs
+from .model.markets import GROUPS, SHARP, book_market_ok, label, market_fair_probs, odds_times
 
 EXCLUDE_BOOKS = {"max", "avg"}
 
@@ -50,6 +56,7 @@ class Candidate:
     elite: int
     score: float
     ev_b365: float | None = None
+    n_sharp: int = 0
 
     def as_row(self) -> dict:
         return asdict(self)
@@ -61,73 +68,136 @@ def risk_of(p: float) -> str:
 
 def kelly_stake(p: float, odds: float, s: Settings) -> float:
     edge = p * odds - 1
-    if edge <= 0 or odds <= 1:
+    if edge <= 0 or odds <= 1 or edge > s.max_ev:  # un 'valor' enorme es un error de datos: nunca se apuesta
         return 0.0
     f = edge / (odds - 1) * s.kelly_fraction
     return round(min(f, s.max_stake_pct) * s.bankroll, 2)
 
 
+def model_weight(sport: str, market: str, weights: dict[str, float], s: Settings) -> float:
+    if sport in s.frozen_sports:
+        return 0.0
+    return float(weights.get(f"{sport}|{market}", DEFAULT_WEIGHT.get(sport, 0.2)))
+
+
+def _b365_markets(odds: pd.DataFrame, s: Settings) -> tuple[dict, dict]:
+    """Por (mercado, línea): ¿el mercado de bet365 está completo y es coherente? y hora de la cuota de bet365."""
+    ok, ref = {}, {}
+    b = odds[odds["bookmaker"] == s.book]
+    if b.empty:
+        return ok, ref
+    times = odds_times(b)
+    for (market, point), g in b.groupby(["market", "point"]):
+        sels = GROUPS.get(market) or []
+        pr = g.drop_duplicates("selection", keep="last").set_index("selection")["price"]
+        complete = bool(sels) and all(x in pr for x in sels)
+        ok[(market, float(point))] = complete and book_market_ok(
+            s.book, [float(pr[x]) for x in sels], s.max_overround_b365, s.exchange_overround)
+        if times is not None:
+            ref[(market, float(point))] = times.loc[g.index].max()
+    return ok, ref
+
+
 def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, weights: dict[str, float],
-                   s: Settings, notes: list[str] | None = None) -> tuple[list[Candidate], list[dict]]:
+                   s: Settings, notes: list[str] | None = None, now: datetime | None = None
+                   ) -> tuple[list[Candidate], list[dict]]:
     """Devuelve (selecciones a mostrar, todas las predicciones del partido)."""
     sport = match.get("sport") or sport_of(match["league"])
     unit = SPORTS[sport]["unidad"]
     odds = odds[~odds["bookmaker"].isin(EXCLUDE_BOOKS)]
-    fair = market_fair_probs(odds)
+    b365_ok, b365_time = _b365_markets(odds, s)
+    valid: dict = {}
+    fair = market_fair_probs(odds, exclude={s.book}, ref_times=b365_time, max_gap_h=s.max_odds_gap_h,
+                             max_overround=s.max_overround, exchange_band=s.exchange_overround, valid_books=valid)
+    now_ts = pd.Timestamp(now) if now is not None else None
+    if now_ts is not None and now_ts.tzinfo is None:
+        now_ts = now_ts.tz_localize("UTC")
     preds, cands = [], []
-    for (market, sel, point), (p_mkt, n_books) in fair.items():
+    for (market, sel, point), (p_mkt, n_books, n_sharp) in fair.items():
         p_mod = model_probs.get((market, sel, point)) if model_probs else None
-        w = weights.get(f"{sport}|{market}", DEFAULT_WEIGHT.get(sport, 0.2)) if p_mod is not None else 0.0
+        w = model_weight(sport, market, weights, s) if p_mod is not None else 0.0
         p = w * p_mod + (1 - w) * p_mkt if p_mod is not None else p_mkt
         preds.append(dict(match_id=match["id"], market=market, selection=sel, point=point,
                           p_model=p_mod, p_market=p_mkt, p_final=p))
         g = odds[(odds["market"] == market) & (odds["selection"] == sel) & (odds["point"] == point)]
         b365 = g.loc[g["bookmaker"] == s.book, "price"]
-        verified = not b365.empty
+        b365_bad = not b365.empty and not b365_ok.get((market, point), False)
+        verified = not b365.empty and not b365_bad
+        age_h = None
         if verified:
             price = float(b365.max())
+            t = b365_time.get((market, point))
+            if now_ts is not None and t is not None and pd.notna(t):
+                age_h = (now_ts - t).total_seconds() / 3600
         else:
-            soft = g.loc[~g["bookmaker"].isin(SHARP), "price"]
+            soft = g.loc[~g["bookmaker"].isin(SHARP) & (g["bookmaker"] != s.book), "price"]
             if soft.empty:
                 continue
             price = float(np.median(soft))  # estimación de lo que pagaría una casa 'blanda' como bet365
+        stale = age_h is not None and age_h > s.b365_max_age_h
         ev = p * price - 1
         ev_mod = (p_mod * price - 1) if p_mod is not None else None
         ev_mkt = p_mkt * price - 1
-        if ev_mod is not None and ev_mod > 0 and ev_mkt > 0 and n_books >= 4:
+        if ev_mkt > 0 and n_sharp >= 1 and n_books >= 3 and (ev_mod is None or ev_mod > 0):
             conf = "alta"
-        elif ev_mod is not None and ev_mod > 0 and abs(p_mod - p_mkt) <= 0.12:
-            conf = "media"
-        elif ev_mod is None and ev_mkt > 0.02 and n_books >= 6:
+        elif ev_mkt > 0 and (n_books >= s.min_books or n_sharp >= 1):
             conf = "media"
         else:
             conf = "baja"
-        ok = p >= s.min_prob and price <= s.max_odds and n_books >= s.min_books
-        if verified and ev >= s.min_ev and ok:
-            tier = "valor"
-        elif not verified and ev >= s.min_ev and ok:
-            tier = "verificar"
+        # referencia suficiente: MIN_BOOKS casas válidas, o Pinnacle válido y a la misma hora (vale por sí solo:
+        # es justo lo que trae OddsPapi en la misma consulta que bet365)
+        enough = n_books >= s.min_books or "pinnacle" in valid.get((market, point), set())
+        in_range = s.min_odds <= price <= s.max_odds
+        ok = p >= s.min_prob and in_range and enough
+        solid_fresh = age_h is None or age_h <= s.solid_b365_max_age_h
+        if ev >= s.min_ev and ok:
+            if ev > s.max_ev:
+                tier = "revisar"
+            elif verified and not stale:
+                tier = "valor"
+            else:
+                tier = "verificar"
+        elif ev > s.max_ev and verified and enough:
+            tier = "revisar"
+        elif (verified and enough and in_range and solid_fresh and p >= s.solid_min_prob
+              and s.solid_min_ev <= ev <= s.max_ev):
+            tier = "solida"
         else:
             tier = "pronostico"
-        elite = int(tier == "valor" and conf == "alta" and ev >= s.alert_ev and p >= s.alert_min_prob
-                    and s.alert_odds_min <= price <= s.alert_odds_max)
-        score = ev * (1.0 if conf == "alta" else 0.7 if conf == "media" else 0.4) * min(1.0, n_books / 6)
+        elite = int(tier == "valor" and conf == "alta" and n_sharp >= 1 and ev >= s.alert_ev
+                    and p >= s.alert_min_prob and s.alert_odds_min <= price <= s.alert_odds_max)
+        score = ev * (1.0 if conf == "alta" else 0.7 if conf == "media" else 0.4) * min(1.0, n_books / 4)
         reasons = [f"Probabilidad estimada {p:.0%} → cuota justa {1 / p:.2f}"]
+        ref_txt = f"{n_sharp} sharp" if n_sharp else "sin casas sharp"
         if p_mod is not None:
-            reasons.append(f"Modelo {p_mod:.0%} · mercado sin margen {p_mkt:.0%} ({n_books} casas, peso modelo {w:.0%})")
+            reasons.append(f"Modelo {p_mod:.0%} · mercado sin margen {p_mkt:.0%} ({n_books} casas válidas, {ref_txt}, "
+                           f"peso modelo {w:.0%})")
         else:
-            reasons.append(f"Sin modelo propio: consenso de {n_books} casas {p_mkt:.0%}")
-        reasons.append(f"{s.book} paga {price:.2f}" if verified else
-                       f"Sin cuota de {s.book} todavía · casas similares pagan {price:.2f}")
+            reasons.append(f"Sin modelo propio: mercado sin margen {p_mkt:.0%} ({n_books} casas válidas, {ref_txt})")
+        if verified:
+            reasons.append(f"{s.book} paga {price:.2f}" + (f" (cuota de hace {age_h:.0f} h: confírmala)" if stale else ""))
+        elif b365_bad:
+            reasons.append(f"La cuota de {s.book} es incoherente (mercado incompleto o margen imposible) · "
+                           f"casas similares pagan {price:.2f}")
+        else:
+            reasons.append(f"Sin cuota de {s.book} todavía · casas similares pagan {price:.2f}")
+        if tier == "revisar":
+            reasons.append(f"Valor esperado {ev:+.0%} demasiado alto: casi seguro es un error de datos. No apostar")
+        if tier == "solida":
+            reasons.append("Sólida: alta probabilidad y bet365 paga el precio justo (sin ventaja, sin regalar margen)"
+                           + (f" · cuota de hace {age_h:.0f} h: confírmala" if age_h and age_h > s.b365_max_age_h else ""))
         if notes:
             reasons += notes
         cands.append(Candidate(
             match["id"], sport, match["league"], match["kickoff"], match["home"], match["away"], market, sel, point,
             label(market, sel, point, match["home"], match["away"], unit), p_mod, p_mkt, p, price, s.book,
-            price if verified else None, ev, kelly_stake(p, price, s) if tier == "valor" else 0.0, conf,
+            price if verified else None, ev, kelly_stake(p, price, s) if tier in ("valor", "solida") else 0.0, conf,
             " | ".join(reasons), n_books, risk_of(p), tier, int(verified), round((1 + s.min_ev) / p, 2), elite,
-            round(score, 4), ev if verified else None))
-    # valor / verificar: la mejor por mercado. pronóstico: la mejor del partido (si no hay nada mejor)
+            round(score, 4), ev if verified else None, n_sharp))
+        preds[-1].update(label=cands[-1].label, price=price, verified=int(verified), ev=ev, tier=tier,
+                         n_books=n_books, n_sharp=n_sharp, confidence=conf, b365_age_h=age_h,
+                         min_odds=cands[-1].min_odds)
+    # valor / verificar / revisar: la mejor por mercado. pronóstico: la mejor del partido (si no hay nada mejor)
     out: dict[tuple, Candidate] = {}
     for c in cands:
         if c.tier == "pronostico":
@@ -135,8 +205,9 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         k = (c.market, c.point)
         if k not in out or c.ev > out[k].ev:
             out[k] = c
-    if not out:
-        pron = [c for c in cands if c.p_final >= 0.35 and c.ev >= -0.06 and c.n_books >= s.min_books]
+    if not any(c.tier in ("valor", "verificar", "solida") for c in out.values()):
+        pron = [c for c in cands if c.tier == "pronostico" and c.p_final >= 0.35 and c.ev >= -0.06
+                and (c.n_books >= s.min_books or c.n_sharp >= 1)]
         if pron:
             best = max(pron, key=lambda c: (c.verified, c.ev + 0.05 * c.p_final))
             out[("pron",)] = best

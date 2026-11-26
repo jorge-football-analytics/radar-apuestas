@@ -1,0 +1,113 @@
+match_id,market,selection,point,p_model
+bundesliga|2026-11-21|Elversberg|Freiburg,1x2,A,0.0,0.28684701074511393
+bundesliga|2026-11-21|Elversberg|Freiburg,1x2,D,0.0,0.21238763029379043
+bundesliga|2026-11-21|Elversberg|Freiburg,1x2,H,0.0,0.5007653589610956
+bundesliga|2026-11-21|Elversberg|Freiburg,ou,O,2.5,0.7424353706180452
+bundesliga|2026-11-21|Elversberg|Freiburg,ou,O,3.5,0.541000283831687
+bundesliga|2026-11-21|Elversberg|Freiburg,ou,U,2.5,0.2575646293819548
+bundesliga|2026-11-21|Elversberg|Freiburg,ou,U,3.5,0.45899971616831303
+bundesliga|2026-11-21|Leverkusen|Paderborn,1x2,A,0.0,0.13131268064969917
+bundesliga|2026-11-21|Leverkusen|Paderborn,1x2,D,0.0,0.2320205519218507
+bundesliga|2026-11-21|Leverkusen|Paderborn,1x2,H,0.0,0.6366667674284501
+bundesliga|2026-11-21|Leverkusen|Paderborn,ou,O,2.5,0.4610464216965951
+bundesliga|2026-11-21|Leverkusen|Paderborn,ou,O,3.5,0.2464877962571039
+bundesliga|2026-11-21|Leverkusen|Paderborn,ou,U,2.5,0.538953578303405
+bundesliga|2026-11-21|Leverkusen|Paderborn,ou,U,3.5,0.7535122037428961
+bundesliga|2026-11-21|Schalke 04|Stuttgart,1x2,A,0.0,0.5101127465301987
+bundesliga|2026-11-21|Schalke 04|Stuttgart,1x2,D,0.0,0.3096744970300778
+bundesliga|2026-11-21|Schalke 04|Stuttgart,1x2,H,0.0,0.18021275643972343
+bundesliga|2026-11-21|Schalke 04|Stuttgart,ou,O,2.5,0.29659590957440274
+bundesliga|2026-11-21|Schalke 04|Stuttgart,ou,O,3.5,0.125498103273914
+bundesliga|2026-11-21|Schalke 04|Stuttgart,ou,U,2.5,0.7034040904255973
+bundesliga|2026-11-21|Schalke 04|Stuttgart,ou,U,3.5,0.874501896726086
+bundesliga|2026-11-22|Augsburg|Mainz,1x2,A,0.0,0.34127566137060733
+bundesliga|2026-11-22|Augsburg|Mainz,1x2,D,0.0,0.25360443840064184
+bundesliga|2026-11-22|Augsburg|Mainz,1x2,H,0.0,0.4051199002287508
+bundesliga|2026-11-22|Augsburg|Mainz,ou,O,2.5,0.5829500179506585
+bundesliga|2026-11-22|Augsburg|Mainz,ou,O,3.5,0.3589360517422413
+bundesliga|2026-11-22|Augsburg|Mainz,ou,U,2.5,0.4170499820493415
+bundesliga|2026-11-22|Augsburg|Mainz,ou,U,3.5,0.6410639482577587
+grecia|2026-11-22|Levadeiakos|Atromitos,1x2,A,0.0,0.24676112765078306
+grecia|2026-11-22|Levadeiakos|Atromitos,1x2,D,0.0,0.2947298804059126
+grecia|2026-11-22|Levadeiakos|Atromitos,1x2,H,0.0,0.4585089919433043
+grecia|2026-11-22|Levadeiakos|Atromitos,ou,O,2.5,0.5015686787724695
+grecia|2026-11-22|Levadeiakos|Atromitos,ou,U,2.5,0.49843132122753053
+laliga2|2026-11-09|Sabadell|Sociedad B,1x2,A,0.0,0.1988349913368835
+laliga2|2026-11-09|Sabadell|Sociedad B,1x2,D,0.0,0.27865220563594223
+laliga2|2026-11-09|Sabadell|Sociedad B,1x2,H,0.0,0.5225128030271744
+laliga2|2026-11-09|Sabadell|Sociedad B,ou,O,2.5,0.35454940632581355
+laliga2|2026-11-09|Sabadell|Sociedad B,ou,U,2.5,0.6454505936741864
+laliga2|2026-11-22|Celta B|Valladolid,1x2,A,0.0,0.3521234725900922
+laliga2|2026-11-22|Celta B|Valladolid,1x2,D,0.0,0.2358267733554788
+laliga2|2026-11-22|Celta B|Valladolid,1x2,H,0.0,0.41204975405442906
+laliga2|2026-11-22|Celta B|Valladolid,ou,O,2.5,0.6011697197940978
+laliga2|2026-11-22|Celta B|Valladolid,ou,U,2.5,0.39883028020590217
+laliga|2026-11-20|Ath Bilbao|Espanol,1x2,A,0.0,0.20337700996807304
+laliga|2026-11-20|Ath Bilbao|Espanol,1x2,D,0.0,0.27827782960674363
+laliga|2026-11-20|Ath Bilbao|Espanol,1x2,H,0.0,0.5183451604251834
+laliga|2026-11-20|Ath Bilbao|Espanol,ou,O,2.5,0.3962159844033533
+laliga|2026-11-20|Ath Bilbao|Espanol,ou,U,2.5,0.6037840155966467
+laliga|2026-11-21|Real Madrid|Celta,1x2,A,0.0,0.09622319768065134
+laliga|2026-11-21|Real Madrid|Celta,1x2,D,0.0,0.17736608893051184
+laliga|2026-11-21|Real Madrid|Celta,1x2,H,0.0,0.7264107133888368
+laliga|2026-11-21|Real Madrid|Celta,ou,O,2.5,0.5812630040641185
+laliga|2026-11-21|Real Madrid|Celta,ou,O,3.5,0.3572294443874652
+laliga|2026-11-21|Real Madrid|Celta,ou,U,2.5,0.41873699593588154
+laliga|2026-11-21|Real Madrid|Celta,ou,U,3.5,0.6427705556125348
+laliga|2026-11-21|Sevilla|Betis,1x2,A,0.0,0.40151731122021733
+laliga|2026-11-21|Sevilla|Betis,1x2,D,0.0,0.2612589124600781
+laliga|2026-11-21|Sevilla|Betis,1x2,H,0.0,0.33722377631970435
+laliga|2026-11-21|Sevilla|Betis,ou,O,2.5,0.5388320007559638
+laliga|2026-11-21|Sevilla|Betis,ou,U,2.5,0.4611679992440362
+laliga|2026-11-22|Getafe|Ath Madrid,1x2,A,0.0,0.4838135894692789
+laliga|2026-11-22|Getafe|Ath Madrid,1x2,D,0.0,0.3081694584497301
+laliga|2026-11-22|Getafe|Ath Madrid,1x2,H,0.0,0.20801695208099094
+laliga|2026-11-22|Getafe|Ath Madrid,ou,O,2.5,0.3142967662455509
+laliga|2026-11-22|Getafe|Ath Madrid,ou,U,2.5,0.6857032337544491
+ligue1|2026-11-22|Lorient|Rennes,1x2,A,0.0,0.365229965453202
+ligue1|2026-11-22|Lorient|Rennes,1x2,D,0.0,0.25045006866763914
+ligue1|2026-11-22|Lorient|Rennes,1x2,H,0.0,0.38431996587915884
+ligue1|2026-11-22|Lorient|Rennes,ou,O,2.5,0.5907607824076918
+ligue1|2026-11-22|Lorient|Rennes,ou,U,2.5,0.4092392175923082
+ligue2|2026-11-23|Nantes|Grenoble,1x2,A,0.0,0.33290324726653364
+ligue2|2026-11-23|Nantes|Grenoble,1x2,D,0.0,0.27411012063129786
+ligue2|2026-11-23|Nantes|Grenoble,1x2,H,0.0,0.39298663210216883
+ligue2|2026-11-23|Nantes|Grenoble,ou,O,2.5,0.4362709924122923
+ligue2|2026-11-23|Nantes|Grenoble,ou,U,2.5,0.5637290075877077
+ligue2|2026-11-23|Sochaux|Dunkerque,1x2,A,0.0,0.4689798471245735
+ligue2|2026-11-23|Sochaux|Dunkerque,1x2,D,0.0,0.29757227406162423
+ligue2|2026-11-23|Sochaux|Dunkerque,1x2,H,0.0,0.2334478788138022
+ligue2|2026-11-23|Sochaux|Dunkerque,ou,O,2.5,0.3223190031704224
+ligue2|2026-11-23|Sochaux|Dunkerque,ou,U,2.5,0.6776809968295776
+premier|2026-11-21|Coventry|Crystal Palace,1x2,A,0.0,0.37249034375847967
+premier|2026-11-21|Coventry|Crystal Palace,1x2,D,0.0,0.26699569329866496
+premier|2026-11-21|Coventry|Crystal Palace,1x2,H,0.0,0.3605139629428555
+premier|2026-11-21|Coventry|Crystal Palace,ou,O,2.5,0.5381693602092171
+premier|2026-11-21|Coventry|Crystal Palace,ou,U,2.5,0.46183063979078287
+premier|2026-11-22|Hull|Brighton,1x2,A,0.0,0.39289797522651526
+premier|2026-11-22|Hull|Brighton,1x2,D,0.0,0.3066122229981639
+premier|2026-11-22|Hull|Brighton,1x2,H,0.0,0.30048980177532075
+premier|2026-11-22|Hull|Brighton,ou,O,2.5,0.3805422445525832
+premier|2026-11-22|Hull|Brighton,ou,O,3.5,0.18304187328386584
+premier|2026-11-22|Hull|Brighton,ou,U,2.5,0.6194577554474168
+premier|2026-11-22|Hull|Brighton,ou,U,3.5,0.8169581267161341
+premier|2026-11-23|Brentford|Everton,1x2,A,0.0,0.2603203798153959
+premier|2026-11-23|Brentford|Everton,1x2,D,0.0,0.28068988137880296
+premier|2026-11-23|Brentford|Everton,1x2,H,0.0,0.4589897388058012
+premier|2026-11-23|Brentford|Everton,ou,O,2.5,0.45184019045830337
+premier|2026-11-23|Brentford|Everton,ou,U,2.5,0.5481598095416966
+seriea|2026-11-21|Parma|Roma,1x2,A,0.0,0.638001644032095
+seriea|2026-11-21|Parma|Roma,1x2,D,0.0,0.22859290322208423
+seriea|2026-11-21|Parma|Roma,1x2,H,0.0,0.13340545274582077
+seriea|2026-11-21|Parma|Roma,ou,O,2.5,0.4355899947182847
+seriea|2026-11-21|Parma|Roma,ou,U,2.5,0.5644100052817154
+seriea|2026-11-22|Sassuolo|Genoa,1x2,A,0.0,0.3698169735866363
+seriea|2026-11-22|Sassuolo|Genoa,1x2,D,0.0,0.2615102637831292
+seriea|2026-11-22|Sassuolo|Genoa,1x2,H,0.0,0.36867276263023463
+seriea|2026-11-22|Sassuolo|Genoa,ou,O,2.5,0.5039380175379635
+seriea|2026-11-22|Sassuolo|Genoa,ou,U,2.5,0.4960619824620365
+turquia|2026-11-23|Buyuksehyr|Corum,1x2,A,0.0,0.22606366791716423
+turquia|2026-11-23|Buyuksehyr|Corum,1x2,D,0.0,0.20416986168775056
+turquia|2026-11-23|Buyuksehyr|Corum,1x2,H,0.0,0.5697664703950851
+turquia|2026-11-23|Buyuksehyr|Corum,ou,O,2.5,0.7561001350588945
+turquia|2026-11-23|Buyuksehyr|Corum,ou,U,2.5,0.2438998649411055

@@ -99,7 +99,11 @@ class OddsAPI:
                 log.warning("odds %s: %s", league, e)
                 continue
             spent += cost
-            rows += parse_odds(data, league)
+            # /odds devuelve TODOS los partidos de la liga (también los de dentro de 2 semanas). Solo guardamos los de
+            # la ventana: lo de más allá se quedaría viejo en la base y contaminaría el consenso días después.
+            limit = now + timedelta(hours=self.s.odds_lookahead_h)
+            data = [e for e in data if now < datetime.fromisoformat(e["commence_time"].replace("Z", "+00:00")) <= limit]
+            rows += parse_odds(data, league, now)
             self.db.set(f"odds_refresh_{league}", now.isoformat())
         today = now.strftime("%Y-%m-%d")
         self.db.set(f"oa_spent_{today}", self.db.get(f"oa_spent_{today}", 0) + spent)
@@ -117,13 +121,20 @@ class OddsAPI:
             return []
 
 
-def parse_odds(events: list[dict], league: str) -> list[dict]:
+def parse_odds(events: list[dict], league: str, now: datetime | None = None) -> list[dict]:
     sport = sport_of(league)
     rows = []
     for ev in events:
         base = dict(sport=sport, league=league, kickoff=ev["commence_time"].replace("Z", "+00:00"),
                     home=ev["home_team"], away=ev["away_team"], source="the-odds-api")
         for bk in ev.get("bookmakers", []):
+            # hora real de la cuota según la casa (last_update); si no viene, la de la consulta
+            stamp = bk.get("last_update") or (now.isoformat() if now else None)
+            if stamp:
+                base_bk = {**base, "fetched_at": pd.Timestamp(stamp).tz_convert("UTC").isoformat()
+                           if pd.Timestamp(stamp).tzinfo else pd.Timestamp(stamp).tz_localize("UTC").isoformat()}
+            else:
+                base_bk = base
             for m in bk.get("markets", []):
                 outs = m.get("outcomes", [])
                 three_way = any(o["name"] == "Draw" for o in outs)
@@ -132,7 +143,7 @@ def parse_odds(events: list[dict], league: str) -> list[dict]:
                     if not price or price <= 1:
                         continue
                     side = "H" if o["name"] == ev["home_team"] else "A" if o["name"] == ev["away_team"] else "D"
-                    row = {**base, "bookmaker": bk["key"], "price": float(price)}
+                    row = {**base_bk, "bookmaker": bk["key"], "price": float(price)}
                     if m["key"] == "h2h":
                         rows.append({**row, "market": "1x2" if three_way else "ml", "selection": side, "point": 0.0})
                     elif m["key"] == "spreads" and o.get("point") is not None and side in "HA":

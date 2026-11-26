@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE TABLE IF NOT EXISTS odds (
     match_id TEXT, bookmaker TEXT, market TEXT, selection TEXT, point REAL,
     price REAL, first_price REAL, first_seen TEXT, updated TEXT, source TEXT,
+    fetched_at TEXT,               -- cuándo publicó la fuente ESA cuota (updated = última vez que se vio)
     PRIMARY KEY (match_id, bookmaker, market, selection, point)
 );
 CREATE TABLE IF NOT EXISTS predictions (
@@ -37,6 +38,9 @@ CREATE TABLE IF NOT EXISTS picks (
     alerted INTEGER DEFAULT 0, won INTEGER, profit REAL, closing_odds REAL, clv REAL,
     sport TEXT DEFAULT 'football', risk TEXT, tier TEXT DEFAULT 'valor', elite INTEGER DEFAULT 0,
     verified INTEGER DEFAULT 1, min_odds REAL, score REAL, updated TEXT,
+    -- locked = 1 desde que la jugada se mostró como 'valor': cuota, probabilidad y stake quedan congelados.
+    -- current_* = cómo está ahora (la web puede mostrarlo), active = 0 si ya no pasaría el filtro
+    locked INTEGER DEFAULT 0, shown_at TEXT, current_odds REAL, current_ev REAL, active INTEGER DEFAULT 1,
     UNIQUE (match_id, market, selection, point)
 );
 CREATE TABLE IF NOT EXISTS combos (
@@ -51,14 +55,23 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 -- Detalle del modelo por partido (goles/puntos esperados, Elo, superficie...) para la ficha del partido
 CREATE TABLE IF NOT EXISTS match_info (match_id TEXT PRIMARY KEY, info TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS runs (ts TEXT, step TEXT, detail TEXT);
+-- Análisis de la jornada: una fila por partido próximo con la selección destacada, semáforo y recomendación
+CREATE TABLE IF NOT EXISTS analysis (
+    match_id TEXT PRIMARY KEY, sport TEXT, league TEXT, kickoff TEXT, home TEXT, away TEXT,
+    market TEXT, selection TEXT, point REAL, label TEXT, p_final REAL, fair_odds REAL, b365_odds REAL,
+    b365_age_h REAL, ev REAL, tier TEXT, light TEXT, recommendation TEXT, n_books INTEGER, n_sharp INTEGER,
+    confidence TEXT, min_odds REAL, p_home REAL, p_draw REAL, p_away REAL, n_markets INTEGER, updated TEXT
+);
 """
 
 # Columnas añadidas en la v2 (para migrar bases de datos antiguas sin perder nada)
 MIGRATIONS = {
     "matches": {"sport": "TEXT DEFAULT 'football'"},
+    "odds": {"fetched_at": "TEXT"},
     "picks": {"sport": "TEXT DEFAULT 'football'", "risk": "TEXT", "tier": "TEXT DEFAULT 'valor'",
               "elite": "INTEGER DEFAULT 0", "verified": "INTEGER DEFAULT 1", "min_odds": "REAL", "score": "REAL",
-              "updated": "TEXT"},
+              "updated": "TEXT", "locked": "INTEGER DEFAULT 0", "shown_at": "TEXT", "current_odds": "REAL",
+              "current_ev": "REAL", "active": "INTEGER DEFAULT 1"},
     "combos": {"sports": "TEXT", "first_kickoff": "TEXT", "tier": "TEXT DEFAULT 'valor'"},
 }
 
@@ -88,6 +101,12 @@ class DB:
                 if isinstance(w, dict):
                     self.set(key, {(k if "|" in k else f"football|{k}"): v for k, v in w.items()})
             self.set("schema_version", 2)
+        if self.get("schema_version", 1) < 3:
+            # v3: hora real de cada cuota y jugadas 'valor' congeladas
+            self.conn.execute("UPDATE odds SET fetched_at = CASE WHEN source='football-data' THEN first_seen "
+                              "ELSE updated END WHERE fetched_at IS NULL")
+            self.conn.execute("UPDATE picks SET locked=1, shown_at=COALESCE(shown_at, created) WHERE tier='valor'")
+            self.set("schema_version", 3)
         self.conn.commit()
 
     @contextmanager

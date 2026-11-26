@@ -13,6 +13,7 @@ import pandas as pd
 from . import notify
 from .backtest import summarize, tennis_backtest, walk_forward
 from .combos import build_combos, legs_json
+from .model.markets import label as market_label
 from .config import CUPS, FOOTBALL, OTHER, Settings, sport_of
 from .db import DB
 from .learn import metrics, recalibrate, settle
@@ -187,23 +188,62 @@ def save_tables(db: DB, ctx: Ctx) -> None:
             db.set(f"tabla_tennis_{tour}", tables.tennis_ranking(ctx.tennis_hist, ctx.tennis, tour))
 
 
-def store_odds(db: DB, odds: pd.DataFrame, now: datetime) -> None:
+ODDS_COLS = "match_id, bookmaker, market, selection, point, price, first_price, first_seen, updated, source, fetched_at"
+
+
+def store_odds(db: DB, odds: pd.DataFrame, now: datetime, purge: bool = True) -> None:
+    """Guarda cuotas. fetched_at = cuándo publicó la fuente esa cuota (no cuándo la miramos nosotros).
+    purge: por cada partido que trae una fuente, se borran las filas de ESA fuente que ya no ofrece (casas o líneas
+    que desaparecen), para que nunca se mezclen cuotas de hace días con las actuales."""
+    if odds.empty:
+        return
     ts = now.isoformat()
+    if "fetched_at" not in odds:
+        odds = odds.assign(fetched_at=ts)
+    odds = odds.assign(fetched_at=odds["fetched_at"].fillna(ts))
     fresher = {"oddspapi": 3, "the-odds-api": 2, "football-data": 1}
     with db.tx() as c:
         for m in odds.drop_duplicates("match_id").itertuples():
             c.execute("INSERT OR IGNORE INTO matches (id, league, kickoff, home, away, sport) VALUES (?,?,?,?,?,?)",
                       (m.match_id, m.league, m.kickoff, m.home, m.away, m.sport))
         for o in odds.itertuples():
-            prev = c.execute("SELECT source, updated FROM odds WHERE match_id=? AND bookmaker=? AND market=? AND "
-                             "selection=? AND point=?", (o.match_id, o.bookmaker, o.market, o.selection, o.point)).fetchone()
+            key = (o.match_id, o.bookmaker, o.market, o.selection, o.point)
+            prev = c.execute("SELECT source, price, fetched_at FROM odds WHERE match_id=? AND bookmaker=? AND market=? "
+                             "AND selection=? AND point=?", key).fetchone()
             if prev is None:
-                c.execute("INSERT INTO odds VALUES (?,?,?,?,?,?,?,?,?,?)",
-                          (o.match_id, o.bookmaker, o.market, o.selection, o.point, o.price, o.price, ts, ts, o.source))
-            elif fresher.get(o.source, 0) >= fresher.get(prev[0], 0) or prev[1] < (now - timedelta(hours=12)).isoformat():
-                c.execute("UPDATE odds SET price=?, updated=?, source=? WHERE match_id=? AND bookmaker=? AND market=? "
-                          "AND selection=? AND point=?",
-                          (o.price, ts, o.source, o.match_id, o.bookmaker, o.market, o.selection, o.point))
+                c.execute(f"INSERT INTO odds ({ODDS_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                          (*key, o.price, o.price, ts, ts, o.source, o.fetched_at))
+                continue
+            old_t = prev[2] or ""
+            if fresher.get(o.source, 0) >= fresher.get(prev[0], 0) or old_t < (now - timedelta(hours=12)).isoformat():
+                changed = prev[1] != o.price or prev[0] != o.source or (o.fetched_at or "") > old_t
+                if changed:
+                    c.execute("UPDATE odds SET price=?, updated=?, source=?, fetched_at=? WHERE match_id=? AND "
+                              "bookmaker=? AND market=? AND selection=? AND point=?",
+                              (o.price, ts, o.source, o.fetched_at, *key))
+                else:
+                    c.execute("UPDATE odds SET updated=? WHERE match_id=? AND bookmaker=? AND market=? AND "
+                              "selection=? AND point=?", (ts, *key))
+        if purge:
+            for (mid, src), g in odds.groupby(["match_id", "source"]):
+                keep = {(b, mk, sel, float(pt)) for b, mk, sel, pt in
+                        zip(g["bookmaker"], g["market"], g["selection"], g["point"])}
+                for r in c.execute("SELECT rowid, bookmaker, market, selection, point FROM odds WHERE match_id=? "
+                                   "AND source=?", (mid, src)).fetchall():
+                    if (r[1], r[2], r[3], float(r[4])) not in keep:
+                        c.execute("DELETE FROM odds WHERE rowid=?", (r[0],))
+
+
+def football_data_timestamp(db: DB, f: pd.DataFrame, now: datetime) -> str:
+    """football-data publica martes y viernes: la cuota tiene la hora en que CAMBIÓ el fichero, no la de cada lectura."""
+    if f.empty:
+        return now.isoformat()
+    cols = ["league", "kickoff", "home", "away", "bookmaker", "market", "selection", "point", "price"]
+    sig = str(pd.util.hash_pandas_object(f[cols].sort_values(cols).reset_index(drop=True), index=False).sum())
+    if db.get("fd_fixtures_sig") != sig or not db.get("fd_fixtures_ts"):
+        db.set("fd_fixtures_sig", sig)
+        db.set("fd_fixtures_ts", now.isoformat())
+    return db.get("fd_fixtures_ts")
 
 
 def _absences(s: Settings, db: DB, upcoming: pd.DataFrame, ctx: Ctx, now: datetime) -> dict:
@@ -308,7 +348,7 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         b365 = o[o["bookmaker"] == s.book]
         if not b365.empty and (b365["source"] == "football-data").all():
             notes.append("Cuota de bet365 tomada el martes/viernes: confírmala antes de apostar")
-        cs, ps = evaluate_match(m, o, probs, weights, s, notes)
+        cs, ps = evaluate_match(m, o, probs, weights, s, notes, now=now)
         candidates += cs
         preds += ps
     if infos:
@@ -320,24 +360,28 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
 
 
 def verify_with_oddspapi(s: Settings, db: DB, ctx: Ctx, candidates: list, matches: dict, now: datetime) -> int:
-    """Pide la cuota real de bet365 solo para los mejores candidatos que no la tienen."""
+    """Pide bet365 + Pinnacle (misma llamada, misma hora) solo para los mejores candidatos de las próximas horas."""
     op = OddsPapi(s, db)
     if not op.enabled:
         return 0
-    # solo competiciones sin bet365 gratis (las ligas de fútbol ya lo traen de football-data)
-    candidates = [c for c in candidates if not FOOTBALL.get(c.league, {}).get("fd")]
-    # primero los que parecen tener valor; con lo que sobre, los pronósticos sin cuota de bet365
-    todo = sorted([c for c in candidates if c.tier == "verificar"], key=lambda c: c.score, reverse=True) + \
-        sorted([c for c in candidates if c.tier == "pronostico" and not c.verified], key=lambda c: c.ev, reverse=True)
+    limit = pd.Timestamp(now) + pd.Timedelta(hours=s.oddspapi_window_h)
+    soon = [c for c in candidates if pd.Timestamp(c.kickoff) <= limit]
+    # 1º lo que parece tener valor (incluido fútbol con la cuota de football-data vieja); 2º pronósticos sin bet365
+    # de competiciones sin bet365 gratis
+    todo = sorted([c for c in soon if c.tier == "verificar"], key=lambda c: c.score, reverse=True) + \
+        sorted([c for c in soon if c.tier == "pronostico" and not c.verified
+                and not FOOTBALL.get(c.league, {}).get("fd")], key=lambda c: c.ev, reverse=True)
     done, added = set(), 0
     for c in todo:
-        if c.match_id in done or op.allowance(now) < 1:
+        if c.match_id in done:
             continue
+        if op.allowance(now) < 1:
+            break
         done.add(c.match_id)
         checked = db.get(f"op_checked_{c.match_id}")
-        if checked and (now - datetime.fromisoformat(checked)).total_seconds() < 8 * 3600:
+        if checked and (now - datetime.fromisoformat(checked)).total_seconds() < 6 * 3600:
             continue
-        rows = op.bet365_odds(matches[c.match_id], now)
+        rows = op.match_odds(matches[c.match_id], now)
         db.set(f"op_checked_{c.match_id}", now.isoformat())
         if rows:
             df = pd.DataFrame(rows)
@@ -348,7 +392,9 @@ def verify_with_oddspapi(s: Settings, db: DB, ctx: Ctx, candidates: list, matche
 
 
 def save_picks(db: DB, candidates: list, ts: str, now: datetime) -> list[dict]:
-    """Inserta/actualiza jugadas. Las ya avisadas no se tocan (queda registro de lo que se recomendó)."""
+    """Inserta/actualiza jugadas. Una jugada que se ha mostrado como 'valor' (o se avisó) queda CONGELADA: se guarda
+    la cuota, probabilidad y stake de ese momento y ya no se toca ni se borra (el seguimiento mide lo que se
+    recomendó, no la última cuota antes del partido). Su estado actual va a current_odds / current_ev / active."""
     seen = set()
     changed = []
     with db.tx() as c:
@@ -356,31 +402,129 @@ def save_picks(db: DB, candidates: list, ts: str, now: datetime) -> list[dict]:
             r = cd.as_row()
             key = (r["match_id"], r["market"], r["selection"], r["point"])
             seen.add(key)
-            ex = c.execute("SELECT id, alerted, tier, ev FROM picks WHERE match_id=? AND market=? AND selection=? "
-                           "AND point=?", key).fetchone()
+            ex = c.execute("SELECT id, alerted, locked, tier, ev FROM picks WHERE match_id=? AND market=? AND "
+                           "selection=? AND point=?", key).fetchone()
             vals = dict(p_final=r["p_final"], p_model=r["p_model"], p_market=r["p_market"], odds=r["odds"],
                         bookmaker=r["bookmaker"], b365_odds=r["b365_odds"], ev=r["ev"], stake=r["stake"],
                         confidence=r["confidence"], reasons=r["reasons"], sport=r["sport"], risk=r["risk"],
                         tier=r["tier"], elite=r["elite"], verified=r["verified"], min_odds=r["min_odds"],
-                        score=r["score"], label=r["label"], updated=ts)
+                        score=r["score"], label=r["label"], updated=ts, current_odds=r["odds"], current_ev=r["ev"],
+                        active=1)
+            lock = r["tier"] in ("valor", "solida")  # lo que se recomienda queda registrado tal cual
             if ex is None:
+                vals.update(locked=int(lock), shown_at=ts if lock else None)
                 cols = ["created", "match_id", "league", "kickoff", "home", "away", "market", "selection", "point",
                         *vals]
                 c.execute(f"INSERT INTO picks ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
                           (ts, r["match_id"], r["league"], r["kickoff"], r["home"], r["away"], r["market"],
                            r["selection"], r["point"], *vals.values()))
                 changed.append(r)
-            elif not ex["alerted"]:
+            elif not (ex["alerted"] or ex["locked"]):
+                vals.update(locked=int(lock), shown_at=ts if lock else None)
                 c.execute(f"UPDATE picks SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?",
                           (*vals.values(), ex["id"]))
                 if r["elite"]:
                     changed.append(r)
-        # jugadas de partidos futuros que ya no pasan el filtro (la cuota cambió) y no se avisaron → fuera
-        for row in c.execute("SELECT id, match_id, market, selection, point FROM picks WHERE alerted=0 AND won IS NULL "
-                             "AND kickoff > ?", (now.isoformat(),)).fetchall():
-            if (row[1], row[2], row[3], row[4]) not in seen:
+            else:  # congelada: solo su estado actual
+                c.execute("UPDATE picks SET current_odds=?, current_ev=?, active=?, updated=? WHERE id=?",
+                          (r["odds"], r["ev"], int(r["tier"] == ex["tier"]), ts, ex["id"]))
+        for row in c.execute("SELECT id, match_id, market, selection, point, alerted, locked FROM picks "
+                             "WHERE won IS NULL AND kickoff > ?", (now.isoformat(),)).fetchall():
+            if (row[1], row[2], row[3], row[4]) in seen:
+                continue
+            if row[5] or row[6]:
+                c.execute("UPDATE picks SET active=0, updated=? WHERE id=?", (ts, row[0]))  # se conserva
+            else:
                 c.execute("DELETE FROM picks WHERE id=?", (row[0],))
     return changed
+
+
+TIER_ORDER = {"valor": 0, "solida": 1, "verificar": 2, "revisar": 3, "pronostico": 4}
+MAIN_MARKET = {"football": "1x2"}
+
+
+def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings | None = None) -> list[dict]:
+    """Una fila por partido: la selección destacada, su semáforo y una recomendación en una frase."""
+    s = s or Settings()
+    rows = []
+    groups = dict(tuple(preds.groupby("match_id"))) if not preds.empty else {}
+    for mid, m in matches.items():
+        g = groups.get(mid)
+        main = MAIN_MARKET.get(m["sport"], "ml")
+        base = dict(match_id=mid, sport=m["sport"], league=m["league"], kickoff=m["kickoff"], home=m["home"],
+                    away=m["away"], updated=now.isoformat(), p_home=None, p_draw=None, p_away=None, n_markets=0)
+        if g is None or g.empty:
+            rows.append({**base, "tier": "sin_datos", "light": "gris", "recommendation": "Sin cuotas ni modelo todavía"})
+            continue
+        mp = g[g["market"] == main].set_index("selection")["p_final"]
+        base.update(p_home=mp.get("H"), p_draw=mp.get("D"), p_away=mp.get("A"),
+                    n_markets=int(g[["market", "point"]].drop_duplicates().shape[0]))
+        if "tier" not in g or g["tier"].isna().all():  # solo modelo (aún sin cuotas)
+            r = g[g["market"] == main].sort_values("p_final", ascending=False).head(1)
+            r = (r if not r.empty else g.sort_values("p_final", ascending=False).head(1)).iloc[0]
+            lab = market_label(r["market"], r["selection"], r["point"], m["home"], m["away"],
+                               "goles" if m["sport"] == "football" else "puntos")
+            rows.append({**base, "market": r["market"], "selection": r["selection"], "point": r["point"], "label": lab,
+                         "p_final": r["p_final"], "fair_odds": 1 / r["p_final"], "tier": "modelo", "light": "gris",
+                         "min_odds": (1 + s.min_ev) / r["p_final"],
+                         "recommendation": f"Aún sin cuotas: solo con bet365 a {(1 + s.min_ev) / r['p_final']:.2f} o más"
+                         .replace(".", ",")})
+            continue
+        g = g.dropna(subset=["tier"]).assign(_o=lambda d: d["tier"].map(TIER_ORDER).fillna(9))
+        top = g.sort_values("_o").iloc[0]["tier"]
+        cand = g[g["tier"] == top]
+        if top == "valor":
+            r = cand.sort_values("ev", ascending=False).iloc[0]
+        elif top == "solida":
+            r = cand.sort_values("p_final", ascending=False).iloc[0]
+        elif top in ("verificar", "revisar"):
+            r = cand.sort_values("ev", ascending=False).iloc[0]
+        else:  # sin nada recomendable: lo más probable con cuota de bet365, si no lo más probable
+            v = cand[cand["verified"] == 1]
+            pool = v if not v.empty else cand
+            pool_main = pool[pool["market"] == main]
+            r = (pool_main if not pool_main.empty else pool).sort_values("p_final", ascending=False).iloc[0]
+        ev, p, verified = float(r["ev"]), float(r["p_final"]), int(r["verified"])
+
+        def fp(x: float, signed: bool = False) -> str:  # porcentaje con coma decimal
+            return (f"{x:+.1%}" if signed else f"{x:.1%}").replace(".", ",")
+        if top == "valor":
+            light, rec = "verde", f"Élite: apostar · valor {fp(ev, True)}"
+        elif top == "solida":
+            light, rec = "verde", f"Sólida: {p:.0%} de probabilidad a precio justo · apta para combinadas"
+        elif top == "verificar":
+            light, rec = "ambar", f"Por confirmar: apostar solo si bet365 paga {r['min_odds']:.2f} o más".replace(".", ",")
+        elif top == "revisar":
+            light, rec = "rojo", "Revisar: valor anómalo, probable error de datos. No apostar"
+        elif not verified:
+            light, rec = "gris", "Sin cuota fiable de bet365: solo informativo"
+        elif ev >= -0.03:
+            light, rec = "ambar", f"Sin ventaja: bet365 cobra un margen de {fp(-ev)} sobre el precio justo"
+        else:
+            light, rec = "rojo", f"No apostar: bet365 paga un {fp(-ev)} por debajo del precio justo"
+        rows.append({**base, "market": r["market"], "selection": r["selection"], "point": r["point"],
+                     "label": r["label"], "p_final": p, "fair_odds": 1 / p if p else None,
+                     "b365_odds": r["price"] if verified else None, "b365_age_h": r.get("b365_age_h"), "ev": ev,
+                     "tier": top, "light": light, "recommendation": rec, "n_books": int(r["n_books"]),
+                     "n_sharp": int(r["n_sharp"]), "confidence": r["confidence"], "min_odds": r["min_odds"]})
+    return rows
+
+
+ANALYSIS_COLS = ["match_id", "sport", "league", "kickoff", "home", "away", "market", "selection", "point", "label",
+                 "p_final", "fair_odds", "b365_odds", "b365_age_h", "ev", "tier", "light", "recommendation", "n_books",
+                 "n_sharp", "confidence", "min_odds", "p_home", "p_draw", "p_away", "n_markets", "updated"]
+
+
+def save_analysis(db: DB, preds: pd.DataFrame, matches: dict, now: datetime) -> int:
+    rows = analysis_rows(preds, matches, now)
+    with db.tx() as c:
+        c.execute("DELETE FROM analysis")
+        for r in rows:
+            vals = [r.get(k) for k in ANALYSIS_COLS]
+            vals = [None if (isinstance(v, float) and pd.isna(v)) else v for v in vals]
+            c.execute(f"INSERT INTO analysis ({','.join(ANALYSIS_COLS)}) VALUES ({','.join('?' * len(ANALYSIS_COLS))})",
+                      vals)
+    return len(rows)
 
 
 def send_alerts(s: Settings, db: DB, now: datetime, matches: dict, combos: list[dict]) -> int:
@@ -441,6 +585,9 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
         run_backtest(s, db, ctx)
         db.set("backtest_date", now.date().isoformat())
 
+    # cachés de la versión anterior de OddsPapi (listas de miles de torneos): ya no se usan
+    db.execute("DELETE FROM kv WHERE key LIKE 'op_tournaments_%' OR key LIKE 'op_fix_%'")
+
     # 1) Resultados y aprendizaje
     api = OddsAPI(s, db)
     no_source = [lg for lg in {*CUPS, *OTHER} if lg in CUPS or not OTHER[lg].get("espn")]
@@ -456,6 +603,8 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     frames, fixtures = [], []
     if "football" in s.active_sports:
         f = fd.load_fixtures()
+        if not f.empty:
+            f = f.assign(fetched_at=football_data_timestamp(db, f, now))
         frames.append(f)
         ctx.diag["football-data (cuotas bet365)"] = dict(ok=not f.empty, filas=len(f), detalle=(
             f"{f['league'].nunique()} ligas, {f[['home', 'away']].drop_duplicates().shape[0]} partidos" if not f.empty
@@ -512,8 +661,8 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
 
     # 4) Combinadas (partidos de las próximas 36 h)
     soon = {k: v for k, v in matches.items() if pd.Timestamp(v["kickoff"]) < pd.Timestamp(now) + pd.Timedelta(hours=36)}
-    combos = build_combos(preds[preds["match_id"].isin(soon)], all_odds[all_odds["match_id"].isin(soon)], soon, s) \
-        if soon and not preds.empty else []
+    combos = build_combos([c for c in candidates if c.match_id in soon], soon, s) if soon else []
+    save_analysis(db, preds, matches, now)
     with db.tx() as c:
         c.execute("DELETE FROM combos WHERE alerted=0 AND won IS NULL AND first_kickoff > ?", (ts,))
         for cb in combos:
@@ -527,6 +676,7 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     summary = dict(partidos=len(matches), por_deporte=dict(Counter(m["sport"] for m in matches.values())),
                    cuotas=n_odds, liquidados=n_settled, valor=tiers.get("valor", 0),
                    verificar=tiers.get("verificar", 0), pronosticos=tiers.get("pronostico", 0),
+                   solidas=tiers.get("solida", 0), revisar=tiers.get("revisar", 0),
                    elite=sum(c.elite for c in candidates), combinadas=len(combos), avisos=sent, pesos=weights,
                    creditos_odds_api=db.get("odds_api_remaining"),
                    oddspapi_mes=db.get(f"oddspapi_used_{now:%Y-%m}", 0))

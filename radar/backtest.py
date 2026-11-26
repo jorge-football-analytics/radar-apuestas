@@ -59,7 +59,8 @@ def walk_forward(hist: pd.DataFrame, s: Settings, test_days: int = 365, refit_da
 def summarize(bt: pd.DataFrame, s: Settings) -> dict:
     if bt.empty:
         return {}
-    out: dict = {"n_predicciones": len(bt), "desde": str(bt["date"].min().date()), "hasta": str(bt["date"].max().date())}
+    out: dict = {"n_predicciones": len(bt), "desde": str(bt["date"].min().date()), "hasta": str(bt["date"].max().date()),
+                 "n_por_mercado": {k: int(v) for k, v in bt.groupby("market").size().items()}}
     grid = np.linspace(0, 1, 21)
     weights = {}
     for market, g in bt.groupby("market"):

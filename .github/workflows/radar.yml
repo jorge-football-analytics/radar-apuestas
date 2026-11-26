@@ -43,9 +43,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SPORTS: ${{ vars.SPORTS || 'football,tennis,basketball,nfl' }}
           BANKROLL: ${{ vars.BANKROLL || '100' }}
-          MIN_EV: ${{ vars.MIN_EV || '0.03' }}
-          ALERT_EV: ${{ vars.ALERT_EV || '0.05' }}
+          MIN_EV: ${{ vars.MIN_EV || '0.025' }}
+          ALERT_EV: ${{ vars.ALERT_EV || '0.03' }}
           ALERT_MAX_DAY: ${{ vars.ALERT_MAX_DAY || '5' }}
+          METRICS_SINCE: ${{ vars.METRICS_SINCE || '' }}
         run: python -m radar run
 
       - name: Guardar base de datos en el repo

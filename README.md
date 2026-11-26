@@ -15,33 +15,38 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 | 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
 | 🏈 NFL | Temporada regular y playoffs | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
 
-**The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos.
+**The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos de las próximas 47 h: una consulta por deporte para la lista de partidos (cada 12 h) y una por partido que trae **bet365 y Pinnacle a la vez**, con la misma hora.
 
 ## La web
 
-- **Inicio:** las mejores jugadas, partidos por deporte y lo que empieza pronto.
-- **Asistente de apuesta:** le dices presupuesto, fecha y hora límite, riesgo y tipo (simple, combinada o repartir). Elige la mejor opción entre todas las selecciones con cuota de bet365 que terminan antes.
-- **Fútbol, Tenis, Baloncesto y NFL:** filtro por competición y riesgo, con tres pestañas:
-  - **Jugadas:** con valor, por confirmar y pronósticos.
-  - **Partidos:** probabilidades, cuotas de bet365 con su movimiento, cuota justa, goles o puntos esperados, Elo, cara a cara y todos los mercados.
-  - **Clasificación:** forma y fuerza del modelo; ranking Elo por superficie en tenis.
-- **Combinadas**, **Rendimiento** (curva, por competición y calibración) y **Estado y método** (cada fuente de datos en verde o rojo).
+Terminal oscura de análisis (Streamlit), pensada para PC y móvil:
+- **Radar de la jornada:** todos los partidos analizados con su selección más interesante, probabilidad real frente a la que implica la cuota de bet365, valor esperado, semáforo (verde, ámbar, rojo, gris) y recomendación. Nunca queda vacía aunque no haya avisos.
+- **Jugadas:** Élite, Sólidas, Por confirmar y Revisar, con barra de probabilidad, cuota justa y stake.
+- **Combinadas:** solo con élite y sólidas de partidos y ligas distintas; probabilidad real conjunta frente a la cuota total.
+- **Partidos:** fichas por competición con todos los mercados y clasificaciones (ranking Elo por superficie en tenis).
+- **Asistente de apuesta:** presupuesto, fecha límite, riesgo y tipo (simple, combinada o repartir).
+- **Rendimiento:** curva de banca y yield (Plotly), caída máxima, CLV, desglose por deporte, mercado, rango de cuota, competición y nivel, y calibración. Respeta `METRICS_SINCE`.
+- **Estado y método:** fuentes en verde o rojo, consultas gastadas, pesos y backtest.
+
+Los datos se leen en `radar/webdata.py` (funciones probadas) y se cachean con `@st.cache_data` por fecha del fichero de la base de datos: la web carga al instante y se refresca sola tras cada análisis.
 
 ## Cómo decide
 
-1. Estima la probabilidad real de cada resultado mezclando su modelo con el consenso del mercado sin margen (Pinnacle pesa doble). El peso del modelo lo fija el backtest y se reajusta con cada partido jugado.
+1. Estima la probabilidad real de cada resultado con el mercado sin margen, usando **solo casas válidas**: mercado completo, margen creíble (máx. 1,12; exchanges 0,99-1,04) y cuotas tomadas como mucho 6 h antes o después de la de bet365. Si hay casas sharp (Pinnacle, exchanges) se usan solo ellas, y bet365 nunca entra en su propio consenso. El modelo propio está congelado (peso 0) en fútbol y tenis hasta que el backtest demuestre que mejora al mercado.
 2. Compara esa probabilidad con la cuota de bet365: `valor esperado = probabilidad × cuota − 1`.
 3. Clasifica cada jugada:
 
 | Nivel | Qué significa | Dónde sale |
 |---|---|---|
-| 💎 **Élite** | Valor ≥ +5 %, modelo y mercado de acuerdo, cuota entre 1,30 y 4 | Telegram (máx. 5 al día) y la web |
-| **Con valor** | Cuota de bet365 confirmada con valor ≥ +3 % | Web |
-| **Por confirmar** | El mercado sugiere valor, pero falta la cuota de bet365. Se indica la cuota mínima | Web |
-| **Pronóstico** | La mejor opción del partido aunque no tenga ventaja | Web |
+| 💎 **Élite** | Cuota de bet365 confirmada (menos de 24 h) con valor ≥ +2,5 % sobre el precio justo limpio, cuota 1,30-2,60. Si además hay referencia sharp (Pinnacle o exchange) y el valor es ≥ +3 %, va a Telegram (máx. 5 al día) | Web y Telegram |
+| 🟢 **Sólida** | Probabilidad real ≥ 65 % y bet365 paga al menos el precio justo (valor ≥ −0,5 %), cuota 1,30-2,60. No es ventaja: es no regalar margen. Base de las combinadas | Web |
+| **Por confirmar** | El mercado sugiere valor, pero falta la cuota de bet365 o es vieja. Se indica la cuota mínima | Web |
+| **Revisar** | Valor > +15 %: casi siempre es un error de datos. Apuesta 0 | Web |
+| **Sin ventaja** | Lo más probable del partido aunque bet365 cobre margen. Información, no recomendación | Radar |
 
 - **Riesgo:** bajo (prob. ≥ 60 %), medio (40-60 %) o alto (< 40 %).
-- **Combinadas:** conservadora, equilibrada y arriesgada, siempre en bet365.
+- **Seguimiento honesto:** una jugada que sale como «con valor» queda congelada con la cuota, la probabilidad y el stake de ese momento; no se reescribe ni se borra. El CLV solo se mide contra el cierre de Pinnacle.
+- **Combinadas:** conservadora, equilibrada y arriesgada, siempre en bet365, solo con élite y sólidas, una por partido y una por liga. «Con valor» si la combinada supera el +2 % y todas sus patas tienen valor ≥ 0; «Sólida» si no baja del −1,5 %.
 
 En Telegram recibes:
 - las jugadas élite;
@@ -73,9 +78,15 @@ Por eso:
 | `ODDSPAPI_KEY` | Cuotas de bet365 de tenis, NBA, NFL y copas | oddspapi.io (gratis) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Avisos | @BotFather |
 
+**Medir el rendimiento desde una fecha (`METRICS_SINCE`).** Para que la web y el resumen semanal cuenten solo las jugadas del motor nuevo:
+1. GitHub → *Settings → Secrets and variables → Actions → Variables → New repository variable*: nombre `METRICS_SINCE`, valor `AAAA-MM-DD` (p. ej. `2026-11-27`).
+2. Streamlit Community Cloud → tu app → *Settings → Secrets*: añade la línea `METRICS_SINCE = "2026-11-27"` y guarda (la app se reinicia sola).
+3. En la web, *Rendimiento* permite cambiar a «Todo el historial» o elegir otra fecha sin tocar la configuración.
+
 **Variables opcionales** (pestaña *Variables*):
 - `SPORTS`: por ejemplo `football,tennis` para seguir solo esos deportes.
 - `BANKROLL`, `MIN_EV`, `ALERT_EV` y `ALERT_MAX_DAY`.
+- `MIN_ODDS` / `MAX_ODDS` (1,30 / 2,60), `SOLID_MIN_PROB` (0,65) y `SOLID_MIN_EV` (−0,005).
 
 ### En local
 ```bash
@@ -98,7 +109,8 @@ radar/
   model/dixon_coles.py       fútbol
   model/elo.py               tenis, NBA, NFL
   value.py                   valor, riesgo, filtro élite
-  combos.py                  combinadas por riesgo
+  combos.py                  combinadas descorrelacionadas (élite y sólidas)
+  webdata.py                 datos de la web (rendimiento, radar del día)
   learn.py                   liquidar, métricas, recalibrar
   pipeline.py                orquestación
   notify.py                  Telegram
