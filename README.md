@@ -7,13 +7,15 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 
 ## Qué cubre
 
-| Deporte | Competiciones | Modelo propio | Cuota de bet365 |
+| Deporte | Competiciones | Datos y resultados | Cuota de bet365 |
 |---|---|---|---|
-| ⚽ Fútbol | 37 ligas: España 1 y 2, Inglaterra 1 a 4, Italia, Alemania y Francia 1 y 2, Escocia 1 y 2, Países Bajos, Portugal, Bélgica, Turquía, Grecia, Argentina, Brasil, MLS, México, Japón, Austria, Suiza, Dinamarca, Polonia, Noruega, Suecia, Irlanda, Rumanía, China y Finlandia | Dixon-Coles (goles) | football-data.co.uk (gratis, martes y viernes) |
-| ⚽ Copas UEFA | Champions, Europa League, Conference | No (solo mercado) | OddsPapi |
-| 🎾 Tenis | Todos los torneos ATP y WTA activos | Elo general + por superficie | OddsPapi |
-| 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
-| 🏈 NFL | Temporada regular y playoffs | Elo + puntos esperados | OddsPapi · partidos y líneas de referencia gratis de ESPN |
+| ⚽ Fútbol | 37 ligas: España 1 y 2, Inglaterra 1 a 4, Italia, Alemania y Francia 1 y 2, Escocia 1 y 2, Países Bajos, Portugal, Bélgica, Turquía, Grecia, Argentina, Brasil, MLS, México, Japón, Austria, Suiza, Dinamarca, Polonia, Noruega, Suecia, Irlanda, Rumanía, China y Finlandia | football-data.co.uk (histórico, Dixon-Coles) | football-data (martes y viernes) y OddsPapi en bloque |
+| ⚽ Copas UEFA | Champions, Europa League, Conference | ESPN (resultados para liquidar, gratis) | OddsPapi en bloque |
+| 🎾 Tenis | ATP y WTA activos | ESPN (Elo general y por superficie). tennis-data.co.uk bloquea las IP de GitHub | OddsPapi en bloque |
+| 🏀 Baloncesto | NBA (con modelo), Euroliga (solo mercado) | ESPN día a día (Elo + puntos esperados) | OddsPapi en bloque · líneas de DraftKings gratis de ESPN |
+| 🏈 NFL | Temporada regular y playoffs | ESPN semana a semana (Elo) | OddsPapi en bloque · líneas de DraftKings gratis de ESPN |
+
+**Mercados por partido:** ganador (1X2 o moneyline), doble oportunidad, más/menos (goles o puntos), ambos marcan y hándicap, cada uno con su probabilidad real, cuota justa, cuota de bet365 y valor.
 
 **The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos de las próximas 47 h: una consulta por deporte para la lista de partidos (cada 12 h) y una por partido que trae **bet365 y Pinnacle a la vez**, con la misma hora.
 
@@ -22,9 +24,9 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 Terminal oscura de análisis (Streamlit), pensada para PC y móvil:
 - **Radar de la jornada:** todos los partidos analizados con su selección más interesante, probabilidad real frente a la que implica la cuota de bet365, valor esperado, semáforo (verde, ámbar, rojo, gris) y recomendación. Nunca queda vacía aunque no haya avisos.
 - **Jugadas:** Élite, Sólidas, Por confirmar y Revisar, con barra de probabilidad, cuota justa y stake.
-- **Combinadas:** solo con élite y sólidas de partidos y ligas distintas; probabilidad real conjunta frente a la cuota total.
-- **Partidos:** fichas por competición con todos los mercados y clasificaciones (ranking Elo por superficie en tenis).
-- **Asistente de apuesta:** presupuesto, fecha límite, riesgo y tipo (simple, combinada o repartir).
+- **Combinadas:** tres perfiles cada jornada (Segura 1,70-2,20 · Equilibrada 2,50-4,00 · Valor EV+ cuando hay ventaja), de cualquier mercado, una pata por partido, con el porqué de cada selección y la probabilidad real conjunta frente a la cuota total.
+- **Partidos:** fichas con forma (V-E-D), racha, rendimiento local/visitante, cara a cara y todos los mercados. Clasificaciones con puntos en casa y fuera y racha; ranking Elo por superficie en tenis.
+- **Asistente de apuesta (copiloto):** banca, riesgo, deportes, cuota objetivo y fecha límite. Construye la mejor simple o combinada con stake (Kelly fraccionado si hay ventaja; si no, como mucho un 0,5 %) y el porqué: probabilidad real frente a la cuota, referencia de mercado, forma, rachas, local/visitante y cara a cara.
 - **Rendimiento:** curva de banca y yield (Plotly), caída máxima, CLV, desglose por deporte, mercado, rango de cuota, competición y nivel, y calibración. Respeta `METRICS_SINCE`.
 - **Estado y método:** fuentes en verde o rojo, consultas gastadas, pesos y backtest.
 
@@ -46,7 +48,7 @@ Los datos se leen en `radar/webdata.py` (funciones probadas) y se cachean con `@
 
 - **Riesgo:** bajo (prob. ≥ 60 %), medio (40-60 %) o alto (< 40 %).
 - **Seguimiento honesto:** una jugada que sale como «con valor» queda congelada con la cuota, la probabilidad y el stake de ese momento; no se reescribe ni se borra. El CLV solo se mide contra el cierre de Pinnacle.
-- **Combinadas:** conservadora, equilibrada y arriesgada, siempre en bet365, solo con élite y sólidas, una por partido y una por liga. «Con valor» si la combinada supera el +2 % y todas sus patas tienen valor ≥ 0; «Sólida» si no baja del −1,5 %.
+- **Combinadas:** Segura, Equilibrada y Valor EV+, siempre en bet365, una pata por partido y, si se puede, una por liga. «Con valor» si la combinada supera el +2 % y todas sus patas tienen valor ≥ 0; «Sólida» si no baja del −1,5 %; «Sin ventaja» si bet365 se queda más margen (se indica); «Por confirmar» si alguna pata aún no tiene cuota de bet365.
 
 En Telegram recibes:
 - las jugadas élite;
@@ -109,7 +111,9 @@ radar/
   model/dixon_coles.py       fútbol
   model/elo.py               tenis, NBA, NFL
   value.py                   valor, riesgo, filtro élite
-  combos.py                  combinadas descorrelacionadas (élite y sólidas)
+  combos.py                  combinadas por perfil (segura, equilibrada, valor)
+  stats.py                   forma, racha, local/visitante y cara a cara
+  model/derived.py           mercados derivados (doble oportunidad, más/menos, ambos marcan, hándicap)
   webdata.py                 datos de la web (rendimiento, radar del día)
   learn.py                   liquidar, métricas, recalibrar
   pipeline.py                orquestación

@@ -83,26 +83,25 @@ def test_combos_decorrelated_and_honest_joint_probability():
     from radar.combos import build_combos
 
     s = Settings()
-    cands, matches = [], {}
-    # 4 partidos sólidos: dos de LaLiga, uno de Premier, uno de Serie A
+    preds, matches = [], {}
+    # 4 partidos con favorito claro: dos de LaLiga, uno de Premier, uno de Serie A
     for i, (lg, pin, b) in enumerate([("laliga", 1.40, 1.43), ("laliga", 1.42, 1.45), ("premier", 1.45, 1.48),
                                       ("seriea", 1.38, 1.41)]):
         m = match(i, lg)
         matches[m["id"]] = m
         o = pd.DataFrame(rows("pinnacle", "1x2", [pin, 4.8, 9.0]) + rows("bet365", "1x2", [b, 4.4, 7.5]))
-        cands += evaluate_match(m, o, None, {}, s, now=NOW)[0]
-    combos = build_combos(cands, matches, s)
+        preds += evaluate_match(m, o, None, {}, s, now=NOW)[1]
+    combos = build_combos(pd.DataFrame(preds), matches, s)
     assert combos
     for c in combos:
-        leagues = [l["league"] for l in c["legs"]]
-        assert len(set(leagues)) == len(leagues)  # nunca dos patas de la misma liga
+        assert len({l["match_id"] for l in c["legs"]}) == len(c["legs"])
         assert c["prob"] == pytest.approx(np.prod([l["p"] for l in c["legs"]]))
         assert c["odds"] == pytest.approx(np.prod([l["price"] for l in c["legs"]]))
+        assert all(l["why"] for l in c["legs"])  # cada pata explica su porqué
         if c["tier"] == "valor":
             assert c["ev"] >= s.combo_min_ev and all(l["ev"] >= 0 for l in c["legs"]) and c["stake"] > 0
         else:
-            assert c["tier"] == "solida" and c["ev"] >= s.combo_solid_min_ev
-        assert all(l["tier"] in ("valor", "solida") for l in c["legs"])
+            assert c["stake"] == 0
 
 
 # ------------------------------------------------------------------ análisis de la jornada

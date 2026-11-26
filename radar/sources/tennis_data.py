@@ -14,15 +14,29 @@ from ..config import RAW_DIR
 log = logging.getLogger(__name__)
 BASE = "http://www.tennis-data.co.uk"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
-SACKMANN = "https://raw.githubusercontent.com/JeffSackmann"
 STATUS: dict = {}  # diagnóstico de la última carga
+
+
+BLOCK_FILE = "tennis_data_blocked.flag"  # tennis-data.co.uk devuelve 403 a los servidores de GitHub
+
+
+def _blocked() -> bool:
+    f = RAW_DIR / BLOCK_FILE
+    return f.exists() and time.time() - f.stat().st_mtime < 7 * 86400
 
 
 def _get(url: str, cache, max_age_h: float) -> bytes | None:
     if cache.exists() and (time.time() - cache.stat().st_mtime) < max_age_h * 3600:
         return cache.read_bytes()
+    if "tennis-data" in url and _blocked():
+        return cache.read_bytes() if cache.exists() else None
     try:
         r = requests.get(url, headers=UA, timeout=60)
+        if r.status_code == 403 and "tennis-data" in url:
+            RAW_DIR.mkdir(parents=True, exist_ok=True)
+            (RAW_DIR / BLOCK_FILE).write_text(str(time.time()))
+            log.warning("tennis-data.co.uk bloquea esta IP (403): se reintenta dentro de 7 días; se usa ESPN")
+            return cache.read_bytes() if cache.exists() else None
         r.raise_for_status()
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(r.content)
@@ -34,14 +48,14 @@ def _get(url: str, cache, max_age_h: float) -> bytes | None:
 
 
 def load(today: date, years: int = 4) -> pd.DataFrame:
-    """tennis-data.co.uk (con cuotas) → respaldo: repositorio de Jeff Sackmann → respaldo: resultados de ESPN."""
+    """tennis-data.co.uk (con cuotas; bloquea las IP de GitHub con 403) → respaldo: resultados de ESPN.
+    El repositorio de Jeff Sackmann ya no sirve los CSV (404 incluso en años antiguos): se ha retirado."""
     df = _load_tennis_data(today, years)
     STATUS.clear()
-    STATUS["tennis-data"] = len(df)
+    STATUS["tennis-data"] = len(df) if not _blocked() else "bloqueado (403)"
     if df.empty or df["date"].max() < pd.Timestamp(today) - pd.Timedelta(days=45):
-        extra = _load_sackmann(today, years)
-        STATUS["sackmann"] = len(extra)
-        espn_rows = _load_espn(today)
+        extra = pd.DataFrame()
+        espn_rows = _load_espn(today, months=12)
         STATUS["espn"] = len(espn_rows)
         df = pd.concat([x for x in (df, extra, espn_rows) if not x.empty], ignore_index=True) if \
             any(not x.empty for x in (df, extra, espn_rows)) else df
@@ -52,34 +66,8 @@ def load(today: date, years: int = 4) -> pd.DataFrame:
     return df
 
 
-def _load_sackmann(today: date, years: int) -> pd.DataFrame:
-    frames = []
-    for tour in ("atp", "wta"):
-        for y in range(today.year - years + 1, today.year + 1):
-            c = _get(f"{SACKMANN}/tennis_{tour}/master/{tour}_matches_{y}.csv", RAW_DIR / f"sack_{tour}_{y}.csv",
-                     max_age_h=12 if y == today.year else 24 * 60)
-            if not c:
-                continue
-            try:
-                d = pd.read_csv(io.BytesIO(c))
-            except Exception:  # noqa: BLE001
-                continue
-            frames.append(pd.DataFrame({
-                "tour": tour, "date": pd.to_datetime(d["tourney_date"].astype(str), format="%Y%m%d", errors="coerce"),
-                "tournament": d.get("tourney_name"), "surface": d.get("surface", "Hard").fillna("Hard"),
-                "winner": d["winner_name"].astype(str), "loser": d["loser_name"].astype(str),
-                "completed": ~d.get("score", pd.Series("", index=d.index)).astype(str).str.contains("RET|W/O|DEF"),
-            }))
-    if not frames:
-        return pd.DataFrame()
-    out = pd.concat(frames, ignore_index=True)
-    for c in ("b365_w", "b365_l", "ps_w", "ps_l", "avg_w", "avg_l", "max_w", "max_l"):
-        out[c] = float("nan")
-    return out.dropna(subset=["date"])
-
-
-def _load_espn(today: date) -> pd.DataFrame:
-    """Últimos ~5 meses de resultados ATP/WTA desde ESPN (por si las otras fuentes van con retraso)."""
+def _load_espn(today: date, months: int = 12) -> pd.DataFrame:
+    """Últimos meses de resultados ATP/WTA desde ESPN (el tenis de ESPN sí acepta rangos de fechas)."""
     import calendar
     import json
 
@@ -87,7 +75,7 @@ def _load_espn(today: date) -> pd.DataFrame:
     rows = []
     for tour in ("atp", "wta"):
         y, m = today.year, today.month
-        for _ in range(5):
+        for _ in range(months):
             cache = RAW_DIR / f"espn_tennis_{tour}_{y}{m:02d}.json"
             current = (y, m) == (today.year, today.month)
             if cache.exists() and (not current or time.time() - cache.stat().st_mtime < 6 * 3600):

@@ -36,6 +36,18 @@ def odds_band(o: float) -> str:
     return "> 2,60"
 
 
+def _has(db: DB, table: str) -> bool:
+    return db.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+def combos_as_picks(rc: pd.DataFrame) -> pd.DataFrame:
+    """Combinadas resueltas con las columnas de una jugada (para usar las mismas métricas)."""
+    if rc.empty:
+        return pd.DataFrame(columns=["kickoff", "odds", "won", "stake", "profit", "p_final", "tier", "sport", "market"])
+    return rc.assign(kickoff=rc["first_kickoff"], p_final=rc["prob"], market="combinada",
+                     sport=rc["sports"].fillna("varios"), tier=rc["risk"])
+
+
 def load_dashboard(db_path: str | Path, now: datetime | None = None, since: str = "") -> dict:
     s = Settings(db_path=Path(db_path))
     now = now or datetime.now(timezone.utc)
@@ -50,8 +62,10 @@ def load_dashboard(db_path: str | Path, now: datetime | None = None, since: str 
                         "ORDER BY ev DESC", (nowi, s.book)),
         "resolved": db.df(f"SELECT * FROM picks WHERE won IN (0,1) AND tier IN ('{tracked}') AND bookmaker=? "
                           "AND COALESCE(shown_at, created) >= ? ORDER BY kickoff", (s.book, since)),
-        "resolved_combos": db.df("SELECT * FROM combos WHERE won IN (0,1) AND tier IN ('valor','solida') AND "
-                                 "created >= ? ORDER BY first_kickoff", (since,)),
+        "resolved_combos": db.df("SELECT * FROM combos WHERE won IN (0,1) AND created >= ? ORDER BY first_kickoff",
+                                 (since,)),
+        "selections": db.df("SELECT s.* FROM selections s JOIN matches m ON m.id=s.match_id WHERE m.status='pendiente' "
+                            "AND m.kickoff > ?", (nowi,)) if _has(db, "selections") else pd.DataFrame(),
         "matches": db.df("SELECT * FROM matches WHERE status='pendiente' AND kickoff > ? ORDER BY kickoff", (nowi,)),
         "odds": db.df("SELECT o.* FROM odds o JOIN matches m ON m.id=o.match_id WHERE m.status='pendiente' "
                       "AND m.kickoff > ?", (nowi,)),
@@ -105,7 +119,9 @@ def perf_series(resolved: pd.DataFrame, bankroll: float = 100.0, mode: str = "un
     return out
 
 
-def kpis(resolved: pd.DataFrame, mode: str = "unit") -> dict:
+def kpis(resolved: pd.DataFrame, mode: str = "unit", bankroll: float = 100.0) -> dict:
+    """n, acierto real y esperado, beneficio, yield (beneficio / apostado), ROI (beneficio / banca inicial; en
+    unidades, igual al yield), cuota media, CLV y caída máxima."""
     if resolved.empty:
         return {"n": 0}
     u = _units(resolved)
@@ -115,8 +131,10 @@ def kpis(resolved: pd.DataFrame, mode: str = "unit") -> dict:
         staked, profit = float(len(resolved)), float(u.sum())
     ser = perf_series(resolved, 0, "stake" if mode == "stake" else "unit")
     clv = resolved["clv"].dropna() if "clv" in resolved else pd.Series(dtype=float)
+    real_money = mode == "stake" and resolved["stake"].fillna(0).sum() > 0
     return {"n": len(resolved), "hit": float(resolved["won"].mean()), "expected": float(resolved["p_final"].mean()),
             "profit": float(profit), "staked": float(staked), "yield": float(profit / staked) if staked else None,
+            "roi": float(profit / bankroll) if real_money and bankroll else (float(profit / staked) if staked else None),
             "avg_odds": float(resolved["odds"].mean()), "clv": float(clv.mean()) if len(clv) else None,
             "clv_n": int(len(clv)), "max_dd": float(ser["drawdown"].min()) if not ser.empty else 0.0}
 
@@ -176,3 +194,21 @@ def day_summary(analysis: pd.DataFrame) -> dict:
     return {"partidos": len(analysis), **{k: int(lc.get(k, 0)) for k in LIGHT_ORDER},
             "elite": int(tc.get("valor", 0)), "solida": int(tc.get("solida", 0)),
             "verificar": int(tc.get("verificar", 0)), "revisar": int(tc.get("revisar", 0))}
+
+
+def level_summary(resolved: pd.DataFrame, resolved_combos: pd.DataFrame, bankroll: float = 100.0) -> pd.DataFrame:
+    """Una fila por nivel: Élite, Sólidas y cada perfil de combinada, con jugadas, acierto, yield y ROI."""
+    rows = []
+    names = {"valor": "Élite", "solida": "Sólidas"}
+    for t in ("valor", "solida"):
+        r = resolved[resolved["tier"] == t] if not resolved.empty else resolved
+        k = kpis(r, "unit")
+        rows.append(dict(nivel=names[t], **{x: k.get(x) for x in ("n", "hit", "expected", "yield", "profit")},
+                         roi=kpis(r, "stake", bankroll).get("roi") if k["n"] else None))
+    cp = combos_as_picks(resolved_combos)
+    for prof in (cp["tier"].dropna().unique().tolist() if not cp.empty else []):
+        r = cp[cp["tier"] == prof]
+        k = kpis(r, "unit")
+        rows.append(dict(nivel=f"Combinada {prof}", **{x: k.get(x) for x in ("n", "hit", "expected", "yield", "profit")},
+                         roi=kpis(r, "stake", bankroll).get("roi")))
+    return pd.DataFrame(rows)

@@ -24,13 +24,17 @@ from radar.model.markets import label as mlabel
 TZ = ZoneInfo("Europe/Madrid")
 DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 DIAS_C = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
-MK = {"1x2": "Resultado", "ml": "Ganador", "ou": "Más/menos", "spread": "Hándicap", "btts": "Ambos marcan"}
+MK = {"1x2": "Resultado", "ml": "Ganador", "ou": "Más/menos", "spread": "Hándicap", "btts": "Ambos marcan",
+      "dc": "Doble oportunidad", "combinada": "Combinada"}
 TIER = {  # nivel → (texto del badge, clase css)
     "valor": ("Élite", "b-elite"), "solida": ("Sólida", "b-solid"), "verificar": ("Por confirmar", "b-check"),
     "revisar": ("Revisar", "b-review"), "pronostico": ("Sin ventaja", "b-none"), "modelo": ("Sin cuotas", "b-none"),
     "sin_datos": ("Sin datos", "b-none")}
 LIGHT = {"verde": "Recomendable", "ambar": "Con reservas", "rojo": "No apostar", "gris": "Sin datos fiables"}
-COMBO_NAME = {"conservadora": "Conservadora", "equilibrada": "Equilibrada", "arriesgada": "Arriesgada"}
+COMBO_NAME = {"segura": "Segura", "equilibrada": "Equilibrada", "valor": "Valor EV+", "conservadora": "Conservadora",
+              "arriesgada": "Arriesgada"}
+COMBO_TIER = {"valor": ("Con valor", "b-elite"), "solida": ("Sólida", "b-solid"), "sin_ventaja": ("Sin ventaja", "b-none"),
+              "verificar": ("Por confirmar", "b-check"), "pronostico": ("Sin ventaja", "b-none")}
 RISK_NAME = {"bajo": "Riesgo bajo", "medio": "Riesgo medio", "alto": "Riesgo alto"}
 C = dict(bg="#06080C", panel="#0C1118", line="#1C2633", text="#E6EDF3", mute="#7D8A9A", amber="#FFB020",
          green="#2BD47D", red="#FF5C5C", cyan="#3BC9F5", violet="#A78BFA")
@@ -188,6 +192,14 @@ font-size:.58rem;line-height:15px;text-align:center;color:#06080C;font-weight:70
 [data-testid="stDataFrame"]{border:1px solid var(--line);border-radius:8px}
 div[data-testid="stTextInput"] input{background:var(--panel)!important;border-color:var(--line2)!important}
 button:focus-visible,summary:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+/* mercados y estadísticas de la ficha */
+.mkt{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin-top:.55rem}
+.mkt .cell .o{font-size:.98rem}.mkt .cell .k b{color:var(--text)}
+.st2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:.55rem;font-size:.74rem;color:var(--mute)}
+.st2 div{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:.35rem .5rem}
+.st2 b{color:var(--text);font-weight:600}
+.why{margin:.25rem 0 0;padding-left:1rem;color:var(--mute);font-size:.74rem}
+.legs .why li,.plan .why li,.alt .why li{display:list-item;border:0;padding:.08rem 0;font-size:.74rem;justify-content:initial}
 /* móvil */
 @media (max-width:900px){
 .block-container{padding:3rem .7rem 3rem}
@@ -399,21 +411,29 @@ def radar_rows(df: pd.DataFrame) -> str:
 
 def combo_card(r: dict) -> str:
     legs = json.loads(r["legs"])
-    tier = "valor" if r["tier"] == "valor" else "solida"
-    items = "".join(
-        f'<li><span>{SPORTS.get(l.get("sport", "football"), SPORTS["football"])["icono"]} <b>{e(l["label"])}</b>'
-        f'<br><span class="lp">{e(l["partido"])} · {e(league_name(l["league"]))} · {when(l["kickoff"])} · '
-        f'prob. {pct(l["p"])}</span></span><span class="lo">{num(l["price"])}</span></li>' for l in legs)
+    t_txt, t_cls = COMBO_TIER.get(r["tier"], (r["tier"], "b-none"))
+    items = []
+    for l in legs:
+        unpriced = l.get("priced") is False
+        why = "".join(f"<li>{e(str(w))}</li>" for w in (l.get("why") or []))
+        items.append(
+            f'<li><span>{SPORTS.get(l.get("sport", "football"), SPORTS["football"])["icono"]} <b>{e(l["label"])}</b>'
+            f' <span class="lp">· {MK.get(l.get("market"), "")}</span>'
+            f'<br><span class="lp">{e(l["partido"])} · {e(league_name(l["league"]))} · {when(l["kickoff"])} · '
+            f'prob. {pct(l["p"])}</span>'
+            + (f'<details><summary>Por qué</summary><ul class="why">{why}</ul></details>' if why else "")
+            + f'</span><span class="lo">{("≥ " + num(l.get("min_odds"))) if unpriced else num(l["price"])}</span></li>')
     implied = 1 / r["odds"] if r["odds"] > 1 else 1
     stake = r.get("stake") or 0
-    return (f'<div class="pk t-{tier}"><div class="pk-h">'
-            f'<span class="bdg {"b-elite" if tier == "valor" else "b-solid"}">{"Con valor" if tier == "valor" else "Sólida"}</span>'
+    tier_cls = "valor" if r["tier"] == "valor" else "solida" if r["tier"] in ("solida",) else "x"
+    ev_lab = "Valor" if r["tier"] == "valor" else "Margen"
+    return (f'<div class="pk t-{tier_cls}"><div class="pk-h"><span class="bdg {t_cls}">{t_txt}</span>'
             f'<span class="bdg b-risk">{COMBO_NAME.get(r["risk"], r["risk"])}</span>'
             f'<span class="w">{len(legs)} selecciones · {when(r["first_kickoff"])}</span></div>'
-            f'<ul class="legs">{items}</ul><div class="cells">'
-            f'<div class="cell hl"><div class="k">Cuota total</div><div class="o">{num(r["odds"])}</div></div>'
-            f'<div class="cell"><div class="k">Prob. real</div><div class="o">{pct(r["prob"], dec=1)}</div></div>'
-            f'<div class="cell{" val" if r["ev"] > 0 else ""}"><div class="k">Valor</div>'
+            f'<ul class="legs">{"".join(items)}</ul><div class="cells">'
+            f'<div class="cell hl"><div class="k">Cuota</div><div class="o">{num(r["odds"])}</div></div>'
+            f'<div class="cell"><div class="k">Prob.</div><div class="o">{pct(r["prob"], dec=1)}</div></div>'
+            f'<div class="cell{" val" if r["ev"] > 0 else ""}"><div class="k">{ev_lab}</div>'
             f'<div class="o {sign_cls(r["ev"])}">{pct(r["ev"], True)}</div></div>'
             f'<div class="cell"><div class="k">Stake €</div><div class="o">{num(stake) if stake else "—"}</div></div>'
             f'</div><div class="pbar big"><i style="width:{min(r["prob"], 1) * 100:.1f}%"></i>'
@@ -422,7 +442,55 @@ def combo_card(r: dict) -> str:
             f'<span>La cuota implica {pct(implied, dec=1)}</span></div></div>')
 
 
-def match_card(m: dict, odds: pd.DataFrame, preds: pd.DataFrame, info: dict, a: dict | None) -> str:
+def markets_block(sel: pd.DataFrame, sport: str) -> str:
+    """Mercados principales con su probabilidad real, cuota justa, cuota de bet365 y valor."""
+    if sel is None or sel.empty:
+        return ""
+    want = [("dc", None), ("btts", None), ("ou", 1.5), ("ou", 2.5), ("ou", 3.5), ("spread", -1.5), ("spread", 1.5)] \
+        if sport == "football" else [("spread", None), ("ou", None)]
+    cells = []
+    for mk, pt in want:
+        g = sel[sel["market"] == mk]
+        if pt is not None:
+            g = g[g["point"] == pt]
+        elif mk in ("spread", "ou") and not g.empty:  # NBA/NFL: la línea más equilibrada
+            mid = g.assign(d=(g["p_final"] - 0.5).abs()).sort_values("d").iloc[0]["point"]
+            g = g[g["point"] == mid]
+        for r in g.sort_values("selection").to_dict("records"):
+            b = r["price"] if r.get("verified") == 1 else None
+            ev = r.get("ev") if b else None
+            hl = " val" if isnum(ev) and ev >= s.min_ev else ""
+            cells.append(f'<div class="cell{hl}"><div class="k">{MK.get(mk, mk)} · <b>{e(str(r["label"]))}</b></div>'
+                         f'<div class="o">{pct(r["p_final"])} <span class="mute" style="font-size:.7rem">justa '
+                         f'{num(1 / r["p_final"]) if r["p_final"] else "—"}</span></div>'
+                         f'<div class="k">bet365 {num(b)} · {pct(ev, True) if isnum(ev) else "—"}</div></div>')
+    return f'<details><summary>Más mercados ({len(cells)})</summary><div class="mkt">{"".join(cells)}</div></details>' \
+        if cells else ""
+
+
+def stats_block(st: dict, sport: str) -> str:
+    if not st:
+        return ""
+    loc, vis, h2h = st.get("local") or {}, st.get("visit") or {}, st.get("h2h") or {}
+    unit = "goles" if sport == "football" else "juegos" if sport == "tennis" else "puntos"
+
+    def side(x: dict, venue: str, title: str) -> str:
+        if not x:
+            return f"<div><b>{title}</b><br>sin datos</div>"
+        rec = x.get(venue) or {}
+        rec_txt = f'{rec.get("v", 0)}-{rec.get("e", 0)}-{rec.get("d", 0)}' if rec.get("pj") else "—"
+        return (f'<div><b>{title}</b> {form_html(x.get("forma", ""))}<br>Racha {e(x.get("racha", "—"))} · '
+                f'{"en casa" if venue == "local" else "fuera"} {rec_txt}<br>{unit} últ. 10: '
+                f'{num(x.get("gf10"), 1)} / {num(x.get("ga10"), 1)}</div>')
+    h = ""
+    if h2h.get("partidos"):
+        h = ('<div style="grid-column:1/-1"><b>Cara a cara</b> · ' + " · ".join(
+            f'{p["marcador"]} ({p["fecha"][2:]})' for p in h2h["partidos"][-5:]) + "</div>")
+    return f'<div class="st2">{side(loc, "local", "Local")}{side(vis, "visitante", "Visitante")}{h}</div>'
+
+
+def match_card(m: dict, odds: pd.DataFrame, preds: pd.DataFrame, info: dict, a: dict | None,
+               sel: pd.DataFrame | None = None) -> str:
     sport = m["sport"]
     unit = SPORTS[sport]["unidad"]
     main = "1x2" if sport == "football" else "ml"
@@ -491,11 +559,13 @@ def match_card(m: dict, odds: pd.DataFrame, preds: pd.DataFrame, info: dict, a: 
     n_books = odds["bookmaker"].nunique() if not odds.empty else 0
     tags.append(f"{n_books} casas" if n_books else "Aún sin cuotas")
     tg = '<div class="tagrow">' + "".join(f'<span class="tag">{e(t)}</span>' for t in tags) + "</div>"
-    return f'<div class="mc">{head}{tri}{grid}{tg}{table}</div>'
+    return (f'<div class="mc">{head}{tri}{grid}{stats_block(info.get("stats") or {}, sport)}{tg}'
+            f'{markets_block(sel, sport)}{table}</div>')
 
 
 def render_matches(M: pd.DataFrame, limit=60):
-    O, Pd, I = D["odds"], D["preds"], D["info"]
+    O, Pd, I, Sx = D["odds"], D["preds"], D["info"], D.get("selections", pd.DataFrame())
+    ss = dict(tuple(Sx.groupby("match_id"))) if Sx is not None and not Sx.empty else {}
     A = {r["match_id"]: r for r in D["analysis"].to_dict("records")} if not D["analysis"].empty else {}
     oo = dict(tuple(O.groupby("match_id"))) if not O.empty else {}
     pp = dict(tuple(Pd.groupby("match_id"))) if not Pd.empty else {}
@@ -506,7 +576,7 @@ def render_matches(M: pd.DataFrame, limit=60):
                     unsafe_allow_html=True)
         st.markdown('<div class="grid2">' + "".join(
             match_card(m, oo.get(m["id"], pd.DataFrame()), pp.get(m["id"], pd.DataFrame()), I.get(m["id"], {}),
-                       A.get(m["id"])) for m in g.to_dict("records")) + "</div>", unsafe_allow_html=True)
+                       A.get(m["id"]), ss.get(m["id"])) for m in g.to_dict("records")) + "</div>", unsafe_allow_html=True)
 
 
 def standings(league: str):
@@ -518,11 +588,14 @@ def standings(league: str):
     if kind == "football":
         mx_a = max((r.get("ataque", 0) for r in t), default=1) or 1
         head = ('<tr><th>#</th><th class="l">Equipo</th><th>PJ</th><th>G</th><th>E</th><th>P</th><th>GF</th><th>GC</th>'
-                '<th>DG</th><th>Pts</th><th class="l">Forma</th><th class="l">Ataque</th><th class="l">Defensa</th></tr>')
+                '<th>DG</th><th>Pts</th><th>Local</th><th>Fuera</th><th class="l">Forma</th><th>Racha</th>'
+                '<th class="l">Ataque</th><th class="l">Defensa</th></tr>')
         body = "".join(
             f'<tr><td>{r["pos"]}</td><td class="l b">{e(r["equipo"])}</td><td>{r["pj"]}</td><td>{r["g"]}</td>'
             f'<td>{r["e"]}</td><td>{r["p"]}</td><td>{r["gf"]}</td><td>{r["gc"]}</td><td>{r["dg"]:+d}</td>'
-            f'<td class="b">{r["pts"]}</td><td class="l">{form_html(r["forma"])}</td>'
+            f'<td class="b">{r["pts"]}</td><td>{r.get("pts_l", "—")}/{r.get("pj_l", "—")}</td>'
+            f'<td>{r.get("pts_v", "—")}/{r.get("pj_v", "—")}</td><td class="l">{form_html(r["forma"])}</td>'
+            f'<td>{e(str(r.get("racha", "")))}</td>'
             f'<td class="l"><span class="bar" style="width:{60 * r.get("ataque", 0) / mx_a:.0f}px"></span></td>'
             f'<td class="l"><span class="bar" style="background:#2BD47D;width:{60 * min(r.get("defensa", 0), 2) / 2:.0f}px">'
             f'</span></td></tr>' for r in t)
@@ -534,11 +607,12 @@ def standings(league: str):
             f'<td>{r["tierra"]}</td><td>{r["hierba"]}</td><td>{r["g"]}-{r["p"]}</td><td class="l">{form_html(r["forma"])}'
             f'</td></tr>' for r in t)
     else:
-        head = ('<tr><th>#</th><th class="l">Equipo</th><th>Elo</th><th>G</th><th>P</th><th>%</th><th>A favor</th>'
-                '<th>En contra</th><th class="l">Forma</th></tr>')
+        head = ('<tr><th>#</th><th class="l">Equipo</th><th>Elo</th><th>G</th><th>P</th><th>%</th><th>Local</th>'
+                '<th>Fuera</th><th>A favor</th><th>En contra</th><th class="l">Forma</th></tr>')
         body = "".join(
             f'<tr><td>{r["pos"]}</td><td class="l b">{e(r["equipo"])}</td><td class="b">{r["elo"]}</td><td>{r["g"]}</td>'
-            f'<td>{r["p"]}</td><td>{pct(r["pct"])}</td><td>{num(r["pf"], 1)}</td><td>{num(r["pa"], 1)}</td>'
+            f'<td>{r["p"]}</td><td>{pct(r["pct"])}</td><td>{r.get("local", "—")}</td><td>{r.get("visitante", "—")}</td>'
+            f'<td>{num(r["pf"], 1)}</td><td>{num(r["pa"], 1)}</td>'
             f'<td class="l">{form_html(r["forma"])}</td></tr>' for r in t)
     st.markdown(f'<div class="scroll"><table class="tb">{head}{body}</table></div>', unsafe_allow_html=True)
 
@@ -640,29 +714,28 @@ def page_picks():
 
 
 def page_combos():
-    topbar("Combinadas", "Solo selecciones élite o sólidas, de partidos y ligas distintas")
-    st.markdown('<p class="hint">Cada combinada cruza selecciones de partidos y ligas diferentes, así que la probabilidad '
-                'real conjunta es el producto de sus probabilidades. Se compara con la probabilidad que implica la cuota '
-                'total de bet365: si la supera, la combinada tiene valor. Las sólidas casi no regalan margen, pero no '
-                'tienen ventaja: apuesta poco.</p>', unsafe_allow_html=True)
+    topbar("Combinadas", "Tres perfiles listos para jugar en cada jornada, con el porqué de cada selección")
+    st.markdown('<p class="hint">Cada combinada cruza selecciones de partidos distintos (y, si se puede, de ligas distintas), '
+                'de cualquier mercado: ganador, doble oportunidad, más/menos, ambos marcan o hándicap. La probabilidad real '
+                'conjunta es el producto de las de cada pata y se compara con la que implica la cuota total. '
+                '<b>Segura</b>: cuota 1,70-2,20 con las selecciones más fiables y menor margen. <b>Equilibrada</b>: '
+                '2,50-4,00 mezclando deportes y mercados. <b>Valor EV+</b>: solo cuando hay patas con ventaja. '
+                'Si una pata aún no tiene cuota de bet365, la combinada sale «por confirmar» con la cuota mínima de cada '
+                'pata. Sin ventaja, el margen se indica: apuesta poco.</p>', unsafe_allow_html=True)
     Cb = D["combos"]
     if Cb.empty:
-        empty("No hay combinadas fiables para las próximas 36 horas: hacen falta al menos dos selecciones élite o sólidas "
-              "de ligas distintas. Prueba el Asistente con tus condiciones.")
+        empty("No hay partidos suficientes en las próximas 36 horas para montar combinadas. Prueba el Asistente.")
         return
-    t1, t2 = st.tabs([f'Con valor · {int((Cb["tier"] == "valor").sum())}',
-                      f'Sólidas · {int((Cb["tier"] != "valor").sum())}'])
-    for tab, sub in ((t1, Cb[Cb["tier"] == "valor"]), (t2, Cb[Cb["tier"] != "valor"])):
+    profiles = [p for p in ("segura", "equilibrada", "valor") if p in set(Cb["risk"])] + \
+        [p for p in Cb["risk"].unique() if p not in ("segura", "equilibrada", "valor")]
+    tabs = st.tabs([f'{COMBO_NAME.get(p, p)} · {int((Cb["risk"] == p).sum())}' for p in profiles])
+    for tab, prof in zip(tabs, profiles):
         with tab:
-            if sub.empty:
-                empty("Ninguna combinada de este tipo ahora mismo.")
-                continue
-            for risk in ("conservadora", "equilibrada", "arriesgada"):
-                g = sub[sub["risk"] == risk]
-                if not g.empty:
-                    section(COMBO_NAME[risk], len(g))
-                    st.markdown(f'<div class="grid">{"".join(combo_card(r) for r in g.to_dict("records"))}</div>',
-                                unsafe_allow_html=True)
+            g = Cb[Cb["risk"] == prof].sort_values("ev", ascending=False)
+            st.markdown(f'<div class="grid">{"".join(combo_card(r) for r in g.to_dict("records"))}</div>',
+                        unsafe_allow_html=True)
+    if "valor" not in set(Cb["risk"]):
+        st.caption("Hoy no hay combinada Valor EV+: ninguna pata con cuota de bet365 supera su precio justo.")
 
 
 def page_matches():
@@ -709,43 +782,45 @@ def page_matches():
 
 
 def page_assistant():
-    topbar("Asistente de apuesta", "Presupuesto, fecha límite y riesgo: elige entre todo lo analizado")
+    topbar("Asistente de apuesta", "Copiloto cuantitativo: banca, riesgo, deportes y cuota objetivo")
     now = datetime.now(timezone.utc)
     with st.form("asis"):
         c1, c2, c3 = st.columns(3)
-        budget = c1.number_input("Presupuesto (€)", min_value=1.0, max_value=10000.0, value=10.0, step=1.0)
+        bankroll = c1.number_input("Banca (€)", min_value=10.0, max_value=1_000_000.0, value=float(s.bankroll), step=10.0)
         dl_date = c2.date_input("Que se resuelva antes del día", value=(datetime.now(TZ) + timedelta(days=2)).date(),
                                 min_value=datetime.now(TZ).date(), format="DD/MM/YYYY")
         dl_time = c3.time_input("a las", value=time(23, 59), step=timedelta(minutes=30))
         c4, c5 = st.columns(2)
         risk = c4.segmented_control("Riesgo", ["bajo", "medio", "alto"], default="bajo",
                                     format_func=lambda r: RISK_NAME[r]) or "bajo"
-        tipo = c5.segmented_control("Tipo", ["auto", "simple", "combinada", "repartir"], default="auto",
+        tipo = c5.segmented_control("Tipo", ["auto", "simple", "combinada"], default="auto",
                                     format_func=lambda t: {"auto": "Lo mejor", "simple": "Simple",
-                                                           "combinada": "Combinada", "repartir": "Repartir"}[t]) or "auto"
+                                                           "combinada": "Combinada"}[t]) or "auto"
         c6, c7 = st.columns([2, 1])
         sports = c6.multiselect("Deportes", [k for k in SPORTS if k in s.active_sports],
                                 default=[k for k in SPORTS if k in s.active_sports],
                                 format_func=lambda k: f'{SPORTS[k]["icono"]} {SPORTS[k]["nombre"]}')
-        only_good = c7.toggle("Solo élite y sólidas", value=True,
+        only_good = c7.toggle("Solo élite y sólidas", value=False,
                               help="Descarta las selecciones donde bet365 cobra margen por encima del precio justo.")
-        go_ = st.form_submit_button("Buscar la mejor apuesta", type="primary", use_container_width=True)
+        use_odds = st.toggle("Fijar cuota objetivo", value=False)
+        odds_range = st.slider("Cuota total objetivo", 1.20, 12.0, (1.70, 2.20), step=0.05)
+        go_ = st.form_submit_button("Construir la mejor apuesta", type="primary", use_container_width=True)
     if not go_:
-        st.markdown('<p class="hint">Usa todas las selecciones con cuota de bet365 de menos de 72 h y descarta las que no '
-                    'terminan antes de tu fecha límite. Riesgo bajo busca cuotas totales de 1,25 a 2,2; medio de 2 a 4,5; '
-                    'alto de 4 a 15.</p>', unsafe_allow_html=True)
+        st.markdown('<p class="hint">El copiloto usa todas las selecciones analizadas con cuota de bet365 de menos de 72 h '
+                    '(todos los mercados), descarta las que no terminan antes de tu fecha y construye la mejor simple o '
+                    'combinada. Para cada una te da el stake sobre tu banca (Kelly fraccionado si hay ventaja; si no, como '
+                    'mucho un 0,5 %) y el porqué: probabilidad real frente a la cuota, referencia de mercado, forma, '
+                    'rachas, local/visitante y cara a cara.</p>', unsafe_allow_html=True)
         return
     deadline = datetime.combine(dl_date, dl_time, TZ).astimezone(timezone.utc)
-    pool = D["pool"]
-    if only_good and not pool.empty:
-        pool = pool[pool["tier"].isin(["valor", "solida"])]
-    plan, alts, n = assistant.recommend(pool, budget, deadline, now, risk, tipo, sports)
+    plan, alts, n = assistant.copilot(D["pool"], bankroll, deadline, now, risk, tipo, sports,
+                                      odds_range if use_odds else None, only_good, s.kelly_fraction, s.max_stake_pct)
     if plan is None:
-        empty(f"No encuentro selecciones que terminen antes del {dl_date:%d/%m} a las {dl_time:%H:%M}"
-              f"{' entre las élite y sólidas' if only_good else ''}. Amplía la fecha o desactiva el filtro.")
+        empty(f"No encuentro selecciones con cuota de bet365 que terminen antes del {dl_date:%d/%m} a las {dl_time:%H:%M}"
+              " con estas condiciones. Amplía la fecha, la cuota objetivo o los deportes.")
         return
     render_plan(plan, n, main=True)
-    for a in alts:
+    for a in alts[:3]:
         render_plan(a, n, main=False)
     st.caption("Las probabilidades son estimaciones. Comprueba la cuota en bet365 antes de apostar: si ha bajado, la "
                "recomendación puede dejar de tener sentido. Apuesta solo lo que puedas permitirte perder.")
@@ -754,33 +829,33 @@ def page_assistant():
 def render_plan(p: assistant.Plan, n: int, main: bool):
     title = {"simple": "Apuesta simple", "combinada": f"Combinada de {len(p.legs)}",
              "repartir": f"Reparto en {len(p.legs)} simples"}[p.tipo]
-    stakes = p.stakes if p.tipo == "repartir" else [p.budget] * len(p.legs)
     rows = []
-    for st_, l in zip(stakes, p.legs):
+    for l in p.legs:
         sp = SPORTS.get(l["sport"], SPORTS["football"])["icono"]
-        stake = f' · apuesta {num(st_)} €' if p.tipo == "repartir" else ""
-        rows.append(f'<li><span>{sp} {badge(l.get("tier", "pronostico"))} <b>{e(l["label"])}</b><br><span class="lp">'
+        why = "".join(f"<li>{e(str(w))}</li>" for w in (l.get("why") or []))
+        rows.append(f'<li><span>{sp} {badge(l.get("tier") or "pronostico")} <b>{e(l["label"])}</b> '
+                    f'<span class="lp">· {MK.get(l.get("market"), "")}</span><br><span class="lp">'
                     f'{e(l["home"])} – {e(l["away"])} · {when(l["kickoff"])} · prob. {pct(l["p_final"])} · valor '
-                    f'{pct(l["ev"], True)}{stake}</span></span><span class="lo">{num(l["odds"])}</span></li>')
-    if p.tipo == "repartir":
-        big = (f'<div><b>{num(p.budget)} €</b><span>repartidos</span></div>'
-               f'<div><b>{pct(p.prob)}</b><span>prob. de acertar al menos una</span></div>'
-               f'<div><b class="{sign_cls(p.ev)}">{num(p.expected)} €</b><span>ganancia esperada</span></div>'
-               f'<div><b>{num(p.win)} €</b><span>beneficio si aciertan todas</span></div>')
-    else:
-        big = (f'<div><b class="am">{num(p.odds)}</b><span>cuota bet365</span></div>'
-               f'<div><b>{pct(p.prob)}</b><span>probabilidad real</span></div>'
-               f'<div><b>{num(p.budget * p.odds)} €</b><span>cobras si aciertas</span></div>'
-               f'<div><b class="{sign_cls(p.ev)}">{pct(p.ev, True)}</b><span>valor esperado ({num(p.expected)} €)</span></div>')
+                    f'{pct(l["ev"], True)}</span>'
+                    + (f'<ul class="why">{why}</ul>' if why and main else
+                       f'<details><summary>Por qué</summary><ul class="why">{why}</ul></details>' if why else "")
+                    + f'</span><span class="lo">{num(l["odds"])}</span></li>')
+    big = (f'<div><b class="am">{num(p.odds)}</b><span>cuota bet365</span></div>'
+           f'<div><b>{pct(p.prob)}</b><span>probabilidad real</span></div>'
+           f'<div><b class="{sign_cls(p.ev)}">{pct(p.ev, True)}</b><span>valor esperado</span></div>'
+           f'<div><b>{num(p.budget)} €</b><span>stake sugerido ({pct(p.stake_pct, dec=1)} de la banca)</span></div>'
+           f'<div><b>{num(p.budget * p.odds)} €</b><span>cobras si aciertas</span></div>')
+    rat = "".join(f"<li>{e(x)}</li>" for x in p.rationale)
     st.markdown(
         f'<div class="{"plan" if main else "alt"}"><h4>{"Recomendación · " if main else "Alternativa · "}{title}</h4>'
-        f'<div class="mute" style="font-size:.8rem">Elegida entre {n} selecciones · se resuelve hacia el {when(p.ends)}</div>'
-        f'{f"<div class=big>{big}</div>" if main else ""}<ul class="legs">{"".join(rows)}</ul>'
-        + ("" if main else f'<div class="mute" style="font-size:.8rem;margin-top:.4rem">valor {pct(p.ev, True)} · '
-                           f'prob. {pct(p.prob)}</div>') + "</div>", unsafe_allow_html=True)
-    if main and p.ev < 0:
-        st.caption("Ninguna opción tiene valor positivo con este filtro: es la menos mala. A la larga, el margen de "
-                   "bet365 hace perder dinero en este tipo de apuesta.")
+        f'<div class="mute" style="font-size:.8rem">Elegida entre {n} selecciones con cuota de bet365 · se resuelve '
+        f'hacia el {when(p.ends)}</div>'
+        f'{f"<div class=big>{big}</div>" if main else ""}'
+        + (f'<ul class="why" style="font-size:.8rem">{rat}</ul>' if rat else "")
+        + f'<ul class="legs">{"".join(rows)}</ul>'
+        + ("" if main else f'<div class="mute" style="font-size:.8rem;margin-top:.4rem">cuota {num(p.odds)} · '
+                           f'prob. {pct(p.prob)} · valor {pct(p.ev, True)} · stake {num(p.budget)} €</div>')
+        + "</div>", unsafe_allow_html=True)
 
 
 def page_perf():
@@ -796,18 +871,30 @@ def page_perf():
     if scope == "custom":
         since = st.date_input("Desde", value=(datetime.now(TZ) - timedelta(days=30)).date(), format="DD/MM/YYYY",
                               key="pf_date").isoformat()
-    tiers = c2.segmented_control("Nivel", ["valor", "solida", "ambos"], default="valor", key="pf_tier",
+    tiers = c2.segmented_control("Nivel", ["valor", "solida", "combinadas", "ambos"], default="valor", key="pf_tier",
                                  label_visibility="collapsed",
-                                 format_func=lambda t: {"valor": "Élite", "solida": "Sólidas", "ambos": "Ambas"}[t]) or "valor"
+                                 format_func=lambda t: {"valor": "Élite", "solida": "Sólidas", "combinadas": "Combinadas",
+                                                        "ambos": "Élite + sólidas"}[t]) or "valor"
     mode = c3.segmented_control("Medida", ["unit", "stake"], default="unit", key="pf_mode", label_visibility="collapsed",
                                 format_func=lambda m: {"unit": "1 unidad por jugada", "stake": "Stakes reales (€)"}[m]) or "unit"
     if not SINCE_DEFAULT:
         st.caption("Consejo: crea la variable METRICS_SINCE con la fecha del arreglo del motor para ver aquí el "
                    "rendimiento limpio por defecto.")
     R = since_filter(R, since)
-    if tiers != "ambos" and not R.empty:
+    RC_all = since_filter(D["resolved_combos"], since)
+    lv = webdata.level_summary(R, RC_all, s.bankroll)
+    if not lv.empty and lv["n"].fillna(0).sum() > 0:
+        section("Por nivel", hint="Élite, Sólidas y cada perfil de combinada. Yield = beneficio / apostado (1 u por "
+                                  "jugada). ROI = beneficio / banca inicial con los stakes reales.")
+        st.dataframe(lv.rename(columns={"nivel": "Nivel", "n": "Jugadas", "hit": "Acierto", "expected": "Esperado",
+                                        "yield": "Yield", "profit": "Unidades", "roi": "ROI"})
+                     .style.format({"Acierto": "{:.0%}", "Esperado": "{:.0%}", "Yield": "{:+.1%}", "Unidades": "{:+.2f}",
+                                    "ROI": "{:+.1%}"}, na_rep="—"), hide_index=True, width="stretch")
+    if tiers == "combinadas":
+        R = webdata.combos_as_picks(RC_all)
+    elif tiers != "ambos" and not R.empty:
         R = R[R["tier"] == tiers]
-    k = webdata.kpis(R, mode)
+    k = webdata.kpis(R, mode, s.bankroll)
     unit = " €" if mode == "stake" and not R.empty and R["stake"].fillna(0).sum() > 0 else " u"
     if not k["n"]:
         kpi_strip([("Jugadas resueltas", "0", "en este periodo", "cyan", "")])
@@ -823,6 +910,8 @@ def page_perf():
              "green" if k["profit"] >= 0 else "red", sign_cls(k["profit"])),
             ("CLV", pct(k["clv"], True) if k["clv_n"] else "—", f'{k["clv_n"]} con cierre de Pinnacle', "amber",
              sign_cls(k["clv"])),
+            ("ROI", pct(k.get("roi"), True), "sobre la banca inicial" if unit == " €" else "= yield (1 u por jugada)",
+             "violet", sign_cls(k.get("roi"))),
             ("Máx. caída", num(k["max_dd"]) + unit, "desde el máximo", "red", "neg" if k["max_dd"] < 0 else "")])
         ser = webdata.perf_series(R, s.bankroll, "stake" if unit == " €" else "unit")
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.74, 0.26], vertical_spacing=0.04,
@@ -845,9 +934,12 @@ def page_perf():
         tabs = st.tabs(["Deporte", "Mercado", "Rango de cuota", "Competición", "Nivel"])
         names = {"sport": lambda x: SPORTS.get(x, {}).get("nombre", x), "market": lambda x: MK.get(x, x),
                  "band": lambda x: x, "league": lambda x: f"{league_flag(x)} {league_name(x)}",
-                 "tier": lambda x: TIER.get(x, (x,))[0]}
+                 "tier": lambda x: COMBO_NAME.get(x, TIER.get(x, (x,))[0])}
         for tab, by in zip(tabs, ["sport", "market", "band", "league", "tier"]):
             with tab:
+                if by not in R and by != "band":
+                    empty("Este desglose no aplica a las combinadas.")
+                    continue
                 b = webdata.breakdown(R, by)
                 b["grupo"] = b["grupo"].map(names[by])
                 cA, cB = st.columns([1.1, 1])
@@ -862,15 +954,6 @@ def page_perf():
                                       "yield": "Yield", "unidades": "Unidades"})
                 cB.dataframe(t.style.format({"Acierto": "{:.0%}", "Esperado": "{:.0%}", "Yield": "{:+.1%}",
                                              "Unidades": "{:+.2f}"}), hide_index=True, width="stretch")
-    RC = since_filter(D["resolved_combos"], since)
-    if not RC.empty:
-        section("Combinadas resueltas", len(RC))
-        RC = RC.assign(u=(RC["odds"] - 1) * RC["won"] - (1 - RC["won"]))
-        g = RC.groupby("tier").agg(n=("won", "size"), acierto=("won", "mean"), unidades=("u", "sum"))
-        g["yield"] = g["unidades"] / g["n"]
-        g.index = [{"valor": "Con valor", "solida": "Sólidas"}.get(i, i) for i in g.index]
-        st.dataframe(g.rename(columns={"n": "Combinadas", "acierto": "Acierto", "unidades": "Unidades", "yield": "Yield"})
-                     .style.format({"Acierto": "{:.0%}", "Unidades": "{:+.2f}", "Yield": "{:+.1%}"}), width="stretch")
     cal = D["calib"]
     if since and not cal.empty:
         cal = cal[cal["kickoff"] >= since]
@@ -917,7 +1000,12 @@ def page_status():
         f'{pct(s.solid_min_prob)} y bet365 paga el precio justo (valor ≥ {pct(s.solid_min_ev, True)}). Sin ventaja, sin '
         'regalar margen.<br>4. <b>Revisar</b>: valor de más del '
         f'{pct(s.max_ev)}: casi siempre es un error de datos.<br>5. <b>Seguimiento</b>: lo recomendado queda congelado con '
-        'su cuota y probabilidad. El CLV solo se mide contra el cierre de Pinnacle.</p>', unsafe_allow_html=True)
+        'su cuota y probabilidad. El CLV solo se mide contra el cierre de Pinnacle.<br>6. <b>Mercados</b>: además del '
+        'ganador se analizan doble oportunidad, más/menos, ambos marcan y hándicap. En fútbol salen de las tasas de gol '
+        'que reproducen el 1X2 y el más/menos 2,5 sin margen; en NBA y NFL, de una normal sobre margen y total (solo '
+        'informativos). Un mercado derivado solo es Élite con referencia sharp y línea real de goles.<br>7. '
+        '<b>Datos</b>: ESPN (resultados y calendario de NBA, NFL, tenis y copas, día a día), football-data (ligas), '
+        'The Odds API (consenso con Pinnacle) y OddsPapi (bet365 en bloque por competición).</p>', unsafe_allow_html=True)
     w = D["weights"] or {}
     if w:
         rows = [{"Deporte": SPORTS.get(k.split("|")[0], {}).get("nombre", k), "Mercado": MK.get(k.split("|")[1], k),

@@ -170,7 +170,7 @@ class Settings:
     odds_regions: str = field(default_factory=lambda: os.getenv("ODDS_REGIONS", "eu"))
     odds_lookahead_h: int = field(default_factory=lambda: _i("ODDS_LOOKAHEAD_H", 48))
     odds_reserve: int = field(default_factory=lambda: _i("ODDS_RESERVE", 20))
-    odds_min_refresh_h: float = field(default_factory=lambda: _f("ODDS_MIN_REFRESH_H", 8))
+    odds_min_refresh_h: float = field(default_factory=lambda: _f("ODDS_MIN_REFRESH_H", 6))
     # Gastar créditos también en ligas de fútbol nacionales (ya tienen bet365 gratis en football-data)
     odds_api_football: bool = field(default_factory=lambda: _b("ODDS_API_FOOTBALL", False))
 

@@ -1,13 +1,19 @@
-"""Combinadas en bet365 construidas SOLO con selecciones Élite ('valor') o Sólidas ('solida'), con cuota de bet365
-confirmada y dentro del rango MIN_ODDS-MAX_ODDS.
+"""Combinadas por perfil, listas para jugar en bet365 cada jornada.
 
-Descorrelación: una selección por partido y, por defecto, como mucho una por liga (COMBO_MAX_PER_LEAGUE). Entre
-partidos distintos de ligas distintas la independencia es una buena aproximación, así que la probabilidad real
-conjunta es el producto de las probabilidades limpias, y se compara con la cuota total de bet365:
-    valor esperado = Π p · Π cuota − 1
-Niveles:
-  valor  → valor esperado ≥ COMBO_MIN_EV (+2 %) y ninguna pata con valor negativo
-  solida → valor esperado ≥ COMBO_SOLID_MIN_EV (−1,5 %): combinada fiable que casi no regala margen (sin ventaja)
+Perfiles (siempre que haya partidos):
+  segura      → cuota total 1,70-2,20 · patas con probabilidad real ≥ 70 % y el menor margen posible
+  equilibrada → cuota total 2,50-4,00 · patas ≥ 55 %, mezclando deportes y mercados
+  valor       → solo patas con ventaja (valor esperado > 0) y combinada con valor ≥ COMBO_MIN_EV. Solo si existe
+
+Las patas pueden ser de cualquier mercado analizado: ganador, doble oportunidad, más/menos, ambos marcan o hándicap.
+Descorrelación: una pata por partido y como mucho COMBO_MAX_PER_LEAGUE por liga (se relaja a 2 si no hay otra
+forma). Entre partidos distintos la independencia es una buena aproximación: probabilidad conjunta = Π p.
+
+Nivel de cada combinada (honesto: no siempre hay valor):
+  valor       → valor esperado ≥ COMBO_MIN_EV y ninguna pata negativa
+  solida      → valor esperado ≥ COMBO_SOLID_MIN_EV (−1,5 %): casi no regala margen
+  sin_ventaja → jugable, pero bet365 se queda un margen mayor (se muestra cuánto)
+  verificar   → alguna pata sin cuota de bet365 todavía: se indica la cuota mínima de cada pata
 """
 from __future__ import annotations
 
@@ -16,84 +22,142 @@ import json
 from collections import Counter
 from math import prod
 
+import pandas as pd
+
 from .config import SPORTS, Settings, sport_of
+from .stats import why_lines
 
-RISK = {
-    # nombre: (patas, prob. mínima por pata, prob. mínima conjunta)
-    "conservadora": ((2, 2), 0.65, 0.45),
-    "equilibrada": ((2, 3), 0.55, 0.30),
-    "arriesgada": ((3, 4), 0.45, 0.15),
+PROFILES = {
+    # nombre: (patas, prob. mínima por pata, cuota total mínima, máxima, margen máximo por pata)
+    "segura": ((2, 3), 0.70, 1.70, 2.20, -0.04),
+    "equilibrada": ((2, 4), 0.55, 2.50, 4.00, -0.04),
+    "valor": ((2, 4), 0.40, 1.60, 6.00, 0.0),
 }
-TIER_RANK = {"valor": 2, "solida": 1}
+MK_NAME = {"1x2": "Resultado", "ml": "Ganador", "ou": "Más/menos", "spread": "Hándicap", "btts": "Ambos marcan",
+           "dc": "Doble oportunidad"}
 
 
-def _as_dict(c) -> dict:
-    return c.as_row() if hasattr(c, "as_row") else dict(c)
+def _records(preds) -> list[dict]:
+    if preds is None:
+        return []
+    if isinstance(preds, pd.DataFrame):
+        return preds.to_dict("records")
+    return [c.as_row() if hasattr(c, "as_row") else dict(c) for c in preds]
 
 
-def combo_legs(cands, s: Settings) -> list[dict]:
-    """La mejor selección apta de cada partido (Élite antes que Sólida; a igualdad, más probabilidad)."""
-    best: dict[str, dict] = {}
-    for c in map(_as_dict, cands):
-        if c.get("tier") not in TIER_RANK or not c.get("verified"):
-            continue
-        if not (s.min_odds <= float(c["odds"]) <= s.max_odds):
-            continue
-        key = (TIER_RANK[c["tier"]], c["ev"] if c["tier"] == "valor" else c["p_final"])
-        prev = best.get(c["match_id"])
-        if prev is None or key > prev["_key"]:
-            best[c["match_id"]] = {**c, "_key": key}
-    return sorted(best.values(), key=lambda c: c["_key"], reverse=True)
-
-
-def build_combos(cands, matches: dict[str, dict], s: Settings, per_risk: int = 2, pool_size: int = 12) -> list[dict]:
-    legs_all = combo_legs(cands, s)
+def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None) -> list[dict]:
+    """Selecciones candidatas a pata, con su porqué. priced=True si hay cuota de bet365 coherente y reciente."""
+    infos = infos or {}
     out = []
-    for risk, ((kmin, kmax), pmin_leg, pmin) in RISK.items():
-        pool = [c for c in legs_all if c["p_final"] >= pmin_leg][:pool_size]
+    for r in _records(preds):
+        m = matches.get(r.get("match_id"))
+        p = r.get("p_final")
+        if m is None or p is None or pd.isna(p) or r.get("tier") in ("revisar", None) or (isinstance(r.get("tier"), float)):
+            continue
+        if r.get("weak"):
+            continue
+        if (r.get("n_books") or 0) < s.min_books and (r.get("n_sharp") or 0) < 1:
+            continue
+        age = r.get("b365_age_h")
+        priced = bool(r.get("verified")) and (age is None or pd.isna(age) or age <= s.solid_b365_max_age_h)
+        price = float(r["price"]) if priced else round(1 / p, 3)
+        if not (1.15 <= price <= s.max_odds):
+            continue
+        ev = p * price - 1 if priced else 0.0
+        sp = m.get("sport") or sport_of(m["league"])
+        st = (infos.get(r["match_id"]) or {}).get("stats") or {}
+        unit = SPORTS.get(sp, SPORTS["football"])["unidad"]
+        why = [f"Probabilidad real {p:.0%} frente al {1 / price:.0%} que implica la cuota"
+               + (f" · margen de bet365 {ev:+.1%}" if priced else " · falta la cuota de bet365"),
+               f"Referencia: {int(r.get('n_books') or 0)} casas válidas, {int(r.get('n_sharp') or 0)} sharp"
+               + (" · derivada del precio justo" if r.get("derived") else "")]
+        why += why_lines(r.get("label", ""), r["market"], r["selection"], st, unit)[:3]
+        out.append(dict(match_id=r["match_id"], sport=sp, league=m["league"], kickoff=m["kickoff"],
+                        partido=f"{m['home']} - {m['away']}", market=r["market"], selection=r["selection"],
+                        point=float(r["point"]), label=r.get("label") or r["selection"], p=float(p), price=price,
+                        ev=float(ev), priced=priced, tier=r.get("tier"), min_odds=round(1 / p, 2),
+                        why=why))
+    return out
+
+
+def _best_per_match(legs: list[dict], key) -> list[dict]:
+    best: dict[str, dict] = {}
+    for l in legs:
+        if l["match_id"] not in best or key(l) > key(best[l["match_id"]]):
+            best[l["match_id"]] = l
+    return sorted(best.values(), key=key, reverse=True)
+
+
+def _search(pool: list[dict], kmin: int, kmax: int, omin: float, omax: float, max_league: int, s: Settings,
+            diversity: bool = False) -> list[tuple]:
+    found = []
+    for k in range(kmin, min(kmax, s.max_combo_legs) + 1):
+        for combo in itertools.combinations(pool, k):
+            if len({c["match_id"] for c in combo}) < k:
+                continue
+            if max(Counter(c["league"] for c in combo).values()) > max_league:
+                continue
+            o = prod(c["price"] for c in combo)
+            if not (omin <= o <= omax):
+                continue
+            p = prod(c["p"] for c in combo)
+            ev = p * o - 1
+            div = len({c["sport"] for c in combo}) + len({c["market"] for c in combo}) if diversity else 0
+            found.append((ev + 0.004 * div, ev, p, o, combo))
+    found.sort(key=lambda x: (x[0], x[2]), reverse=True)
+    return found
+
+
+def _tier(combo, ev: float, s: Settings) -> str:
+    if not all(c["priced"] for c in combo):
+        return "verificar"
+    if ev >= s.combo_min_ev and all(c["ev"] >= 0 for c in combo):
+        return "valor"
+    if ev >= s.combo_solid_min_ev:
+        return "solida"
+    return "sin_ventaja"
+
+
+def build_combos(preds, matches: dict[str, dict], s: Settings, infos: dict | None = None, per_profile: int = 2,
+                 pool_size: int = 14) -> list[dict]:
+    legs = leg_pool(preds, matches, s, infos)
+    out = []
+    for profile, ((kmin, kmax), pmin, omin, omax, margin_min) in PROFILES.items():
+        if profile == "valor":
+            cand = [l for l in legs if l["priced"] and l["ev"] > 0 and l["p"] >= pmin]
+            pool = _best_per_match(cand, key=lambda l: (l["ev"], l["p"]))[:pool_size]
+        else:
+            priced = [l for l in legs if l["priced"] and l["p"] >= pmin and l["ev"] >= margin_min]
+            pool = _best_per_match(priced, key=lambda l: (l["ev"], l["p"]))[:pool_size]
         found = []
-        for k in range(kmin, min(kmax, s.max_combo_legs) + 1):
-            for combo in itertools.combinations(pool, k):
-                leagues = Counter(c["league"] for c in combo)
-                if max(leagues.values()) > s.combo_max_per_league:
-                    continue  # correlación: misma liga
-                p = prod(c["p_final"] for c in combo)
-                if p < pmin:
-                    continue
-                o = prod(c["odds"] for c in combo)
-                ev = p * o - 1
-                if ev >= s.combo_min_ev and all(c["ev"] >= 0 for c in combo):
-                    tier = "valor"
-                elif ev >= s.combo_solid_min_ev:
-                    tier = "solida"
-                else:
-                    continue
-                found.append((TIER_RANK[tier], ev, p, o, combo, tier))
-        found.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+        for max_league in (s.combo_max_per_league, 2):
+            found = _search(pool, kmin, kmax, omin, omax, max_league, s, diversity=profile == "equilibrada")
+            if found:
+                break
+        if not found and profile != "valor":  # sin suficientes cuotas de bet365: combinada por confirmar
+            unpriced = [l for l in legs if l["p"] >= pmin]
+            pool = _best_per_match(unpriced, key=lambda l: (l["priced"], l["p"]))[:pool_size]
+            found = _search(pool, kmin, kmax, omin, omax, 2, s)
         used: set = set()
         n = 0
-        for _, ev, p, o, combo, tier in found:
+        for _, ev, p, o, combo in found:
             ids = {c["match_id"] for c in combo}
             if ids & used:
                 continue
-            legs_out = []
-            for c in combo:
-                m = matches.get(c["match_id"], c)
-                sp = m.get("sport") or sport_of(m["league"])
-                legs_out.append(dict(match_id=c["match_id"], sport=sp, league=m["league"], market=c["market"],
-                                     selection=c["selection"], point=c["point"], price=c["odds"], p=c["p_final"],
-                                     ev=c["ev"], tier=c["tier"], label=c["label"],
-                                     partido=f"{m['home']} - {m['away']}", kickoff=m["kickoff"]))
-            f = ev / (o - 1) * s.kelly_fraction * 0.5 if ev > 0 and o > 1 else 0
-            sig = s.book + "|" + "|".join(sorted(f"{l['match_id']}:{l['market']}:{l['selection']}:{l['point']}"
-                                                 for l in legs_out))
-            out.append(dict(tier=tier, risk=risk, bookmaker=s.book, odds=o, prob=p, ev=ev, legs=legs_out,
+            tier = _tier(combo, ev, s)
+            if profile == "valor" and tier != "valor":
+                continue
+            f = ev / (o - 1) * s.kelly_fraction * 0.5 if tier == "valor" and o > 1 else 0
+            legs_out = [{k: v for k, v in c.items()} for c in combo]
+            sig = s.book + "|" + profile + "|" + "|".join(sorted(
+                f"{l['match_id']}:{l['market']}:{l['selection']}:{l['point']}" for l in legs_out))
+            out.append(dict(tier=tier, risk=profile, bookmaker=s.book, odds=o, prob=p, ev=ev, legs=legs_out,
                             stake=round(min(f, s.max_stake_pct / 2) * s.bankroll, 2), signature=sig,
                             sports=",".join(sorted({l["sport"] for l in legs_out})),
                             first_kickoff=min(l["kickoff"] for l in legs_out)))
             used |= ids
             n += 1
-            if n >= per_risk:
+            if n >= per_profile:
                 break
     return out
 
@@ -102,4 +166,4 @@ def legs_json(c: dict) -> str:
     return json.dumps(c["legs"], ensure_ascii=False, default=float)
 
 
-__all__ = ["build_combos", "combo_legs", "legs_json", "RISK", "SPORTS"]
+__all__ = ["build_combos", "leg_pool", "legs_json", "PROFILES", "MK_NAME"]

@@ -142,6 +142,8 @@ def label(market: str, sel: str, point: float, home: str, away: str, unit: str =
         return f"{'Más' if sel == 'O' else 'Menos'} de {point:g} {unit}"
     if market == "btts":
         return "Ambos marcan: sí" if sel == "Y" else "Ambos marcan: no"
+    if market == "dc":
+        return {"1X": f"{home} o empate", "X2": f"Empate o {away}", "12": f"{home} o {away} (sin empate)"}.get(sel, sel)
     return f"{market} {sel}"
 
 
@@ -165,4 +167,6 @@ def outcome(market: str, sel: str, point: float, hg: int, ag: int) -> int | None
     if market == "btts":
         both = hg > 0 and ag > 0
         return int(both if sel == "Y" else not both)
+    if market == "dc":
+        return int({"1X": hg >= ag, "X2": hg <= ag, "12": hg != ag}[sel])
     raise ValueError(market)

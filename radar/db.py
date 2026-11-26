@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 -- Detalle del modelo por partido (goles/puntos esperados, Elo, superficie...) para la ficha del partido
 CREATE TABLE IF NOT EXISTS match_info (match_id TEXT PRIMARY KEY, info TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS runs (ts TEXT, step TEXT, detail TEXT);
+-- Todas las selecciones evaluadas en el último análisis (todos los mercados): base del asistente y las fichas
+CREATE TABLE IF NOT EXISTS selections (
+    match_id TEXT, market TEXT, selection TEXT, point REAL, label TEXT, p_final REAL, p_market REAL, price REAL,
+    verified INTEGER, ev REAL, tier TEXT, derived INTEGER, weak INTEGER, n_books INTEGER, n_sharp INTEGER,
+    b365_age_h REAL, min_odds REAL, updated TEXT, PRIMARY KEY (match_id, market, selection, point)
+);
 -- Análisis de la jornada: una fila por partido próximo con la selección destacada, semáforo y recomendación
 CREATE TABLE IF NOT EXISTS analysis (
     match_id TEXT PRIMARY KEY, sport TEXT, league TEXT, kickoff TEXT, home TEXT, away TEXT,

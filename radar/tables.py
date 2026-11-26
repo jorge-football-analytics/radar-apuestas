@@ -22,19 +22,32 @@ def football_table(hist: pd.DataFrame, model=None) -> list[dict]:
         cur = hist[hist["date"] > last - pd.Timedelta(days=300)]
     rows: dict[str, dict] = {}
     for r in cur.sort_values("date").itertuples(index=False):
-        for team, gf, ga in ((r.home, r.hg, r.ag), (r.away, r.ag, r.hg)):
-            t = rows.setdefault(team, dict(equipo=team, pj=0, g=0, e=0, p=0, gf=0, gc=0, pts=0, forma=[]))
+        for team, gf, ga, side in ((r.home, r.hg, r.ag, "l"), (r.away, r.ag, r.hg, "v")):
+            t = rows.setdefault(team, dict(equipo=team, pj=0, g=0, e=0, p=0, gf=0, gc=0, pts=0, forma=[],
+                                           pj_l=0, pts_l=0, gf_l=0, gc_l=0, pj_v=0, pts_v=0, gf_v=0, gc_v=0))
             t["pj"] += 1
             t["gf"] += gf
             t["gc"] += ga
             res = "V" if gf > ga else "E" if gf == ga else "D"
             t[{"V": "g", "E": "e", "D": "p"}[res]] += 1
-            t["pts"] += {"V": 3, "E": 1, "D": 0}[res]
+            pts = {"V": 3, "E": 1, "D": 0}[res]
+            t["pts"] += pts
+            t[f"pj_{side}"] += 1
+            t[f"pts_{side}"] += pts
+            t[f"gf_{side}"] += gf
+            t[f"gc_{side}"] += ga
             t["forma"].append(res)
     out = []
     for t in rows.values():
         t["dg"] = t["gf"] - t["gc"]
-        t["forma"] = _form(t["forma"])
+        res = t["forma"]
+        streak = 0
+        for x in reversed(res):
+            if x != res[-1]:
+                break
+            streak += 1
+        t["racha"] = f"{streak}{res[-1]}" if res else ""
+        t["forma"] = _form(res)
         if model is not None and t["equipo"] in model.index:
             i = model.index[t["equipo"]]
             t["ataque"] = float(np.exp(model.attack[i]))
@@ -55,9 +68,10 @@ def team_elo_table(hist: pd.DataFrame, elo: TeamElo) -> list[dict]:
     cur = hist[hist["date"] >= start]
     rows: dict[str, dict] = {}
     for r in cur.itertuples(index=False):
-        for team, pf, pa in ((r.home, r.hg, r.ag), (r.away, r.ag, r.hg)):
-            t = rows.setdefault(team, dict(equipo=team, g=0, p=0, pf=0, pa=0, forma=[]))
+        for team, pf, pa, side in ((r.home, r.hg, r.ag, "l"), (r.away, r.ag, r.hg, "v")):
+            t = rows.setdefault(team, dict(equipo=team, g=0, p=0, pf=0, pa=0, forma=[], g_l=0, p_l=0, g_v=0, p_v=0))
             t["g" if pf > pa else "p"] += 1
+            t[("g_" if pf > pa else "p_") + side] += 1
             t["pf"] += pf
             t["pa"] += pa
             t["forma"].append("V" if pf > pa else "D")
@@ -66,7 +80,8 @@ def team_elo_table(hist: pd.DataFrame, elo: TeamElo) -> list[dict]:
         n = t["g"] + t["p"]
         out.append(dict(equipo=team, elo=round(elo.rating[team]), g=t["g"], p=t["p"],
                         pct=t["g"] / n if n else 0, pf=t["pf"] / n if n else 0, pa=t["pa"] / n if n else 0,
-                        forma=_form(t["forma"]), ultimo=str(last.date())))
+                        forma=_form(t["forma"]), ultimo=str(last.date()), local=f'{t["g_l"]}-{t["p_l"]}',
+                        visitante=f'{t["g_v"]}-{t["p_v"]}'))
     out.sort(key=lambda t: t["elo"], reverse=True)
     for k, t in enumerate(out, 1):
         t["pos"] = k

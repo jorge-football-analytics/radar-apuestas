@@ -141,30 +141,23 @@ def test_value_only_bet365_and_tiers():
 
 
 def test_combos_only_bet365():
-    from radar.value import Candidate
-
+    """Combinadas por perfil: solo cuotas de bet365 confirmadas cuando las hay, una pata por partido y liga."""
     s = Settings()
+    leagues = ["laliga", "premier", "seriea", "bundesliga", "ligue1"]
     matches = {f"m{i}": {"home": f"H{i}", "away": f"A{i}", "kickoff": "2026-11-08T20:00:00+00:00",
-                         "league": ["laliga", "premier", "seriea", "bundesliga", "ligue1"][i], "sport": "football"}
-               for i in range(5)}
-
-    def cand(i, tier, p, odds, verified=1):
-        m = matches[f"m{i}"]
-        return Candidate(f"m{i}", "football", m["league"], m["kickoff"], m["home"], m["away"], "1x2", "H", 0.0,
-                         f"Gana H{i}", None, p, p, odds, "bet365", odds, p * odds - 1, 0, "alta", "", 3, "bajo", tier,
-                         verified, 1.0, 0, 0.0)
-
-    cands = [cand(0, "solida", 0.70, 1.45), cand(1, "solida", 0.68, 1.48), cand(2, "valor", 0.62, 1.70),
-             cand(3, "pronostico", 0.80, 1.20), cand(4, "solida", 0.72, 1.40, verified=0)]
-    combos = build_combos(cands, matches, s)
-    assert combos and all(c["bookmaker"] == "bet365" for c in combos)
-    used = {l["match_id"] for c in combos for l in c["legs"]}
-    assert used <= {"m0", "m1", "m2"}  # nada de pronósticos ni de cuotas sin confirmar
+                         "league": leagues[i], "sport": "football"} for i in range(5)}
+    preds = pd.DataFrame([dict(match_id=f"m{i}", market="dc", selection="1X", point=0.0, p_final=p, price=o,
+                               verified=1, ev=p * o - 1, tier="pronostico", label=f"H{i} o empate", n_books=3,
+                               n_sharp=1, derived=1, weak=0, b365_age_h=2.0)
+                          for i, (p, o) in enumerate([(0.80, 1.24), (0.78, 1.27), (0.76, 1.30), (0.74, 1.33),
+                                                      (0.72, 1.36)])])
+    combos = build_combos(preds, matches, s)
+    seg = [c for c in combos if c["risk"] == "segura"]
+    assert seg and all(c["bookmaker"] == "bet365" for c in combos)
     for c in combos:
+        assert len({l["league"] for l in c["legs"]}) == len(c["legs"])
         assert c["prob"] == pytest.approx(np.prod([l["p"] for l in c["legs"]]))
-        assert c["ev"] == pytest.approx(c["prob"] * c["odds"] - 1)
-        assert len({l["league"] for l in c["legs"]}) == len(c["legs"])  # descorrelación por liga
-    assert {c["tier"] for c in combos} <= {"valor", "solida"}
+    assert all(1.70 <= c["odds"] <= 2.20 for c in seg)
 
 
 def test_migrates_old_database(tmp_path):
@@ -222,12 +215,13 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr(OddsAPI, "fetch_scores", lambda self, lg: [])
     monkeypatch.setattr(pipeline, "run_backtest", lambda s, db, ctx: {})
 
-    def b365(self, match, now):  # OddsPapi confirma bet365 con una cuota alta para el favorito
-        return [dict(sport="basketball", league="nba", kickoff=match["kickoff"], home=match["home"],
-                     away=match["away"], source="oddspapi", bookmaker="bet365", market="ml", selection=sel,
-                     point=0.0, price=p) for sel, p in (("H", 1.40), ("A", 3.20))]
+    def b365(self, matches, now, books=None, refresh_h=6):  # OddsPapi en bloque: bet365 de los partidos de NBA
+        return [dict(sport="basketball", league="nba", kickoff=m["kickoff"], home=m["home"], away=m["away"],
+                     source="oddspapi", bookmaker="bet365", market="ml", selection=sel, point=0.0, price=p,
+                     match_id=m["id"]) for m in matches if m.get("sport") == "basketball"
+                for sel, p in (("H", 1.40), ("A", 3.20))]
 
-    monkeypatch.setattr(OddsPapi, "match_odds", b365)
+    monkeypatch.setattr(OddsPapi, "fetch_bulk", b365)
     sent = []
     monkeypatch.setattr(pipeline.notify, "send", lambda s, text: sent.append(text) or True)
 

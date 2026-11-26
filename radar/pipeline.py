@@ -27,6 +27,7 @@ from .sources.injuries import absence_factor, fetch_api_football, load_manual
 from .sources.odds_api import OddsAPI
 from .sources.oddspapi import OddsPapi
 from . import tables
+from .stats import match_stats
 from .teams import match_player, match_team, match_us, norm, player_key
 from .value import evaluate_match, model_only
 
@@ -330,6 +331,8 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
                      "AND kickoff > ?)", (now.isoformat(),))
     candidates, preds, matches = [], [], {}
     infos = {}
+    results = results_by_sport(ctx)
+    goal_avg = league_goal_avgs(ctx.fb_hist, now)
     for m in upcoming.to_dict("records"):
         m["sport"] = m.get("sport") or sport_of(m["league"])
         if m["sport"] not in s.active_sports:
@@ -337,6 +340,9 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         matches[m["id"]] = m
         o = all_odds[all_odds["match_id"] == m["id"]]
         probs, notes, info = model_for(m, o, ctx, absences, s, now)
+        st = match_stats(results.get(m["sport"]), m["home"], m["away"], now, draws=m["sport"] == "football")
+        if st:
+            info = {**(info or {}), "stats": st}
         if info:
             infos[m["id"]] = info
         if o.empty:
@@ -348,7 +354,8 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         b365 = o[o["bookmaker"] == s.book]
         if not b365.empty and (b365["source"] == "football-data").all():
             notes.append("Cuota de bet365 tomada el martes/viernes: confírmala antes de apostar")
-        cs, ps = evaluate_match(m, o, probs, weights, s, notes, now=now)
+        context = {"goal_avg": goal_avg.get(m["league"]), "model_total": (info or {}).get("total")}
+        cs, ps = evaluate_match(m, o, probs, weights, s, notes, now=now, context=context)
         candidates += cs
         preds += ps
     if infos:
@@ -357,6 +364,14 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
                 c.execute("INSERT OR REPLACE INTO match_info VALUES (?,?,?)", (mid, json.dumps(info, default=float),
                                                                             now.isoformat()))
     return candidates, pd.DataFrame(preds), matches, all_odds
+
+
+def league_goal_avgs(hist: pd.DataFrame, now: datetime, days: int = 365) -> dict[str, float]:
+    """Goles por partido de cada liga en el último año (para los mercados derivados cuando no hay línea de goles)."""
+    if hist is None or hist.empty:
+        return {}
+    h = hist[hist["date"] >= pd.Timestamp(now).tz_convert(None) - pd.Timedelta(days=days)]
+    return {lg: float((g["hg"] + g["ag"]).mean()) for lg, g in h.groupby("league") if len(g) >= 30}
 
 
 def verify_with_oddspapi(s: Settings, db: DB, ctx: Ctx, candidates: list, matches: dict, now: datetime) -> int:
@@ -510,6 +525,26 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
     return rows
 
 
+SEL_COLS = ["match_id", "market", "selection", "point", "label", "p_final", "p_market", "price", "verified", "ev", "tier",
+            "derived", "weak", "n_books", "n_sharp", "b365_age_h", "min_odds", "updated"]
+
+
+def save_selections(db: DB, preds: pd.DataFrame, now: datetime) -> int:
+    if preds.empty or "tier" not in preds:
+        with db.tx() as c:
+            c.execute("DELETE FROM selections")
+        return 0
+    rows = preds.dropna(subset=["tier"]).assign(updated=now.isoformat())
+    with db.tx() as c:
+        c.execute("DELETE FROM selections")
+        for r in rows.to_dict("records"):
+            vals = [r.get(k) for k in SEL_COLS]
+            vals = [None if (isinstance(v, float) and pd.isna(v)) else v for v in vals]
+            c.execute(f"INSERT OR REPLACE INTO selections ({','.join(SEL_COLS)}) VALUES ({','.join('?' * len(SEL_COLS))})",
+                      vals)
+    return len(rows)
+
+
 ANALYSIS_COLS = ["match_id", "sport", "league", "kickoff", "home", "away", "market", "selection", "point", "label",
                  "p_final", "fair_odds", "b365_odds", "b365_age_h", "ev", "tier", "light", "recommendation", "n_books",
                  "n_sharp", "confidence", "min_odds", "p_home", "p_draw", "p_away", "n_markets", "updated"]
@@ -586,13 +621,18 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
         db.set("backtest_date", now.date().isoformat())
 
     # cachés de la versión anterior de OddsPapi (listas de miles de torneos): ya no se usan
-    db.execute("DELETE FROM kv WHERE key LIKE 'op_tournaments_%' OR key LIKE 'op_fix_%'")
+    db.execute("DELETE FROM kv WHERE key LIKE 'op_tournaments_%' OR key LIKE 'op_fix_%' OR key LIKE 'op_checked_%'")
 
     # 1) Resultados y aprendizaje
     api = OddsAPI(s, db)
-    no_source = [lg for lg in {*CUPS, *OTHER} if lg in CUPS or not OTHER[lg].get("espn")]
     scores = []
-    for lg in no_source:
+    # copas europeas: resultados gratis de ESPN (antes costaban 2 créditos de The Odds API por copa y día)
+    if "football" in s.active_sports and not db.df(
+            "SELECT 1 FROM matches WHERE league IN ('champions','europa','conference') AND status='pendiente' "
+            "AND kickoff < ?", ((now - timedelta(hours=3)).isoformat(),)).empty:
+        scores += espn.cup_results(now.date())
+    # resto sin fuente gratuita (Euroliga): The Odds API
+    for lg in [k for k, v in OTHER.items() if not v.get("espn")]:
         if not db.df("SELECT 1 FROM matches WHERE league=? AND status='pendiente' AND kickoff < ?",
                      (lg, (now - timedelta(hours=3)).isoformat())).empty:
             scores += api.fetch_scores(lg)
@@ -644,12 +684,23 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
         fx = canonicalize(pd.DataFrame(fixtures), ctx, db)
         store_fixtures(db, fx[pd.to_datetime(fx["kickoff"], utc=True, format="ISO8601") > now])
 
-    # 3) Análisis → verificación de bet365 en OddsPapi → nuevo análisis
+    # 3) OddsPapi en bloque: bet365 (y Pinnacle si sobra presupuesto) de todos los partidos de las próximas horas
     upcoming = db.df("SELECT * FROM matches WHERE status='pendiente' AND kickoff > ?", (ts,))
+    op = OddsPapi(s, db)
+    op_rows = []
+    if op.enabled and not upcoming.empty:
+        ups = [m for m in upcoming.to_dict("records") if (m.get("sport") or sport_of(m["league"])) in s.active_sports]
+        op_rows = op.fetch_bulk(ups, now)
+        if op_rows:
+            store_odds(db, pd.DataFrame(op_rows).dropna(subset=["match_id"]), now)
+    ctx.diag["OddsPapi (bet365 en bloque)"] = dict(ok=op.enabled, filas=len(op_rows), detalle=(
+        f"{len({(r['home'], r['away']) for r in op_rows})} partidos con cuota en esta ejecución · "
+        f"{db.get(f'oddspapi_used_{now:%Y-%m}', 0)} de {s.oddspapi_monthly} consultas este mes" if op.enabled
+        else "sin clave ODDSPAPI_KEY"))
+
+    # 4) Análisis de todos los partidos y mercados
     absences = _absences(s, db, upcoming, ctx, now) if not upcoming.empty else {}
     candidates, preds, matches, all_odds = analyze(s, db, ctx, now, absences, weights)
-    if verify_with_oddspapi(s, db, ctx, candidates, matches, now):
-        candidates, preds, matches, all_odds = analyze(s, db, ctx, now, absences, weights)
 
     with db.tx() as c:
         for p in preds.to_dict("records"):
@@ -659,10 +710,14 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     save_picks(db, candidates, ts, now)
     save_tables(db, ctx)
 
-    # 4) Combinadas (partidos de las próximas 36 h)
+    # 5) Combinadas por perfil (partidos de las próximas 36 h)
     soon = {k: v for k, v in matches.items() if pd.Timestamp(v["kickoff"]) < pd.Timestamp(now) + pd.Timedelta(hours=36)}
-    combos = build_combos([c for c in candidates if c.match_id in soon], soon, s) if soon else []
+    infos = {r["match_id"]: json.loads(r["info"]) for r in db.conn.execute(
+        "SELECT match_id, info FROM match_info WHERE updated=?", (ts,)).fetchall()}
+    combos = build_combos(preds[preds["match_id"].isin(soon)] if not preds.empty else preds, soon, s, infos) \
+        if soon else []
     save_analysis(db, preds, matches, now)
+    save_selections(db, preds, now)
     with db.tx() as c:
         c.execute("DELETE FROM combos WHERE alerted=0 AND won IS NULL AND first_kickoff > ?", (ts,))
         for cb in combos:
@@ -683,10 +738,6 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
     # mantener la base de datos pequeña: cuotas de partidos terminados hace más de 30 días
     db.execute("DELETE FROM odds WHERE match_id IN (SELECT id FROM matches WHERE status != 'pendiente' AND kickoff < ?)",
                ((now - timedelta(days=30)).isoformat(),))
-    op = OddsPapi(s, db)
-    ctx.diag["OddsPapi (bet365)"] = dict(ok=op.enabled, filas=db.get(f"oddspapi_used_{now:%Y-%m}", 0), detalle=(
-        f"{db.get(f'oddspapi_used_{now:%Y-%m}', 0)} de {s.oddspapi_monthly} consultas este mes" if op.enabled
-        else "sin clave ODDSPAPI_KEY"))
     db.set("fuentes", {"ts": ts, **ctx.diag})
     db.log(ts, "run", str(summary))
     db.set("last_run", ts)
