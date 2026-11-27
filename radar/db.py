@@ -79,6 +79,9 @@ MIGRATIONS = {
               "updated": "TEXT", "locked": "INTEGER DEFAULT 0", "shown_at": "TEXT", "current_odds": "REAL",
               "current_ev": "REAL", "active": "INTEGER DEFAULT 1"},
     "combos": {"sports": "TEXT", "first_kickoff": "TEXT", "tier": "TEXT DEFAULT 'valor'"},
+    # v6: cuota de referencia operable (mejor cuota real de otra casa cuando bet365 no tiene cuota reciente)
+    "selections": {"price_src": "TEXT", "ref_book": "TEXT", "b365_est": "REAL"},
+    "analysis": {"price": "REAL", "price_src": "TEXT", "ref_book": "TEXT", "b365_est": "REAL"},
 }
 
 

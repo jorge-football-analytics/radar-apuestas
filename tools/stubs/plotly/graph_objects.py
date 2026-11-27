@@ -4,6 +4,8 @@ class _Trace(dict):
         super().__init__(**k)
 class Scatter(_Trace): pass
 class Bar(_Trace): pass
+class Heatmap(_Trace): pass
+class Indicator(_Trace): pass
 class Figure:
     def __init__(self, data=None, rows=1, specs=None):
         self.traces = [data] if isinstance(data, _Trace) else list(data or [])
@@ -18,9 +20,13 @@ class Figure:
     def update_xaxes(self, **k): return self
     def update_yaxes(self, **k): return self
     def add_hline(self, **k): return self
+    def add_vline(self, **k): return self
+    def add_annotation(self, **k): return self
+    def add_shape(self, **k): return self
+    def update_traces(self, **k): return self
     def validate(self):
         for t in self.traces:
-            for key in ("x", "y"):
+            for key in ("x", "y", "z", "text"):
                 v = t.get(key)
                 if v is not None:
                     list(v)

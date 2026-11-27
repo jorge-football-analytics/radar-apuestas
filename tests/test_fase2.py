@@ -129,7 +129,8 @@ def test_analysis_rows_cover_every_match_with_light_and_recommendation():
     assert out["solida"]["tier"] == "solida" and out["solida"]["light"] == "verde"
     assert out["margen"]["light"] == "ambar" and "margen" in out["margen"]["recommendation"]
     assert out["caro"]["light"] == "rojo" and out["caro"]["recommendation"].startswith("No apostar")
-    assert out["sin_b365"]["light"] in ("gris", "ambar")
+    # sin bet365: la cuota real de otra casa (bwin) es la referencia operable y se nombra
+    assert out["sin_b365"]["price_src"] == "mercado" and "bwin" in out["sin_b365"]["recommendation"]
     assert out["vacio"]["light"] == "gris"
     for r in out.values():
         assert r["recommendation"]

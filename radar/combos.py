@@ -57,8 +57,8 @@ def table_rows(tables: dict | None, league: str, home: str, away: str) -> dict:
 
 
 def leg_report(m: dict, sport: str, market: str, selection: str, point: float, info: dict, tables: dict | None,
-               p: float, price: float | None, priced: bool, n_books=None, n_sharp=None, derived: bool = False
-               ) -> list[str]:
+               p: float, price: float | None, priced: bool, n_books=None, n_sharp=None, derived: bool = False,
+               ref_book: str | None = None, b365_est: float | None = None) -> list[str]:
     """Informe de una pata: scouting deportivo con datos reales + por qué merece (o no) la pena la cuota."""
     st = (info or {}).get("stats") or {}
     try:
@@ -69,7 +69,9 @@ def leg_report(m: dict, sport: str, market: str, selection: str, point: float, i
         lines = []
     nb = int(n_books) if n_books is not None and not pd.isna(n_books) else None
     ns = int(n_sharp) if n_sharp is not None and not pd.isna(n_sharp) else None
-    return lines + [price_line(p, price, priced, nb, ns, derived)]
+    rb = ref_book if isinstance(ref_book, str) and ref_book else None
+    be = float(b365_est) if b365_est is not None and not pd.isna(b365_est) else None
+    return lines + [price_line(p, price, priced, nb, ns, derived, rb, be)]
 
 
 def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, tables: dict | None = None) -> list[dict]:
@@ -86,7 +88,11 @@ def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, table
         if (r.get("n_books") or 0) < s.min_books and (r.get("n_sharp") or 0) < 1:
             continue
         age = r.get("b365_age_h")
-        priced = bool(r.get("verified")) and (age is None or pd.isna(age) or age <= s.solid_b365_max_age_h)
+        src = r.get("price_src") if isinstance(r.get("price_src"), str) else None
+        ref_book = r.get("ref_book") if src == "mercado" and isinstance(r.get("ref_book"), str) else None
+        # operable: bet365 coherente y reciente, o la mejor cuota real de otra casa (referencia de mercado)
+        priced = (bool(r.get("verified")) and (age is None or pd.isna(age) or age <= s.solid_b365_max_age_h)) \
+            or src == "mercado"
         price = float(r["price"]) if priced else round(1 / p, 3)
         if not (1.15 <= price <= s.max_odds):
             continue
@@ -94,12 +100,13 @@ def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, table
         sp = m.get("sport") or sport_of(m["league"])
         info = infos.get(r["match_id"]) or {}
         why = leg_report(m, sp, r["market"], r["selection"], float(r["point"]), info, tables, float(p),
-                         price if priced else None, priced, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")))
+                         price if priced else None, priced, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")),
+                         ref_book, r.get("b365_est"))
         out.append(dict(match_id=r["match_id"], sport=sp, league=m["league"], kickoff=m["kickoff"],
                         partido=f"{m['home']} - {m['away']}", market=r["market"], selection=r["selection"],
                         point=float(r["point"]), label=r.get("label") or r["selection"], p=float(p), price=price,
                         ev=float(ev), priced=priced, tier=r.get("tier"), min_odds=round(1 / p, 2),
-                        why=why))
+                        ref_book=ref_book, why=why))
     return out
 
 

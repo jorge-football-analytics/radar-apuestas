@@ -49,6 +49,9 @@ def combos_as_picks(rc: pd.DataFrame) -> pd.DataFrame:
                      sport=rc["sports"].fillna("varios"), tier=rc["risk"])
 
 
+OPERABLE = "bookmaker=? OR reasons LIKE '%Cuota ref. mercado%'"
+
+
 def load_dashboard(db_path: str | Path, now: datetime | None = None, since: str = "") -> dict:
     s = Settings(db_path=Path(db_path))
     now = now or datetime.now(timezone.utc)
@@ -58,10 +61,11 @@ def load_dashboard(db_path: str | Path, now: datetime | None = None, since: str 
     tracked = "','".join(TRACKED)
     d = {
         "analysis": db.df("SELECT * FROM analysis WHERE kickoff > ? ORDER BY kickoff", (nowi,)),
-        "picks": db.df("SELECT * FROM picks WHERE kickoff > ? AND bookmaker=? ORDER BY score DESC", (nowi, s.book)),
+        # bet365 o, desde la v6, la mejor cuota real de otra casa como referencia operable (se nombra la casa)
+        "picks": db.df(f"SELECT * FROM picks WHERE kickoff > ? AND ({OPERABLE}) ORDER BY score DESC", (nowi, s.book)),
         "combos": db.df("SELECT * FROM combos WHERE won IS NULL AND first_kickoff > ? AND bookmaker=? "
                         "ORDER BY ev DESC", (nowi, s.book)),
-        "resolved": db.df(f"SELECT * FROM picks WHERE won IN (0,1) AND tier IN ('{tracked}') AND bookmaker=? "
+        "resolved": db.df(f"SELECT * FROM picks WHERE won IN (0,1) AND tier IN ('{tracked}') AND ({OPERABLE}) "
                           "AND COALESCE(shown_at, created) >= ? ORDER BY kickoff", (s.book, since)),
         "resolved_combos": db.df("SELECT * FROM combos WHERE won IN (0,1) AND created >= ? ORDER BY first_kickoff",
                                  (since,)),
@@ -90,7 +94,17 @@ def load_dashboard(db_path: str | Path, now: datetime | None = None, since: str 
         "since": since, "now": nowi,
     }
     db.close()
+    # partidos de cuadros de tenis aún sin rival (TBD): no son partidos todavía
+    for k in ("analysis", "matches"):
+        df = d[k]
+        if not df.empty and {"home", "away"} <= set(df.columns):
+            d[k] = df[~df["home"].isin(PLACEHOLDER) & ~df["away"].isin(PLACEHOLDER)].reset_index(drop=True)
+    if not d["pool"].empty:
+        d["pool"] = d["pool"][~d["pool"]["home"].isin(PLACEHOLDER) & ~d["pool"]["away"].isin(PLACEHOLDER)]
     return d
+
+
+PLACEHOLDER = {"TBD", "TBA", "Por determinar", "", None}
 
 
 # ------------------------------------------------------------------ rendimiento
@@ -234,3 +248,111 @@ def confidence_score(p: float, ev: float | None = None, n_books: int | None = No
     sc += 15 * min(1.0, max(0.0, (p - 0.25) / 0.5)) if ok(p) else 0
     sc -= 10 if derived else 0
     return int(round(min(100, max(0, sc))))
+
+
+# ------------------------------------------------------------------ recomendaciones del día
+TIER_RANK = {"valor": 0, "cuota_alta": 1, "solida": 2, "moderado": 3, "objetivo": 4}
+
+
+def daily_picks(pool: pd.DataFrame, now: datetime | None = None, n_min: int = 8, n_max: int = 15,
+                hours: float = 48) -> pd.DataFrame:
+    """Recomendaciones del día (8-15): primero los 4 niveles (élite, cuota alta, sólidas, valor moderado) con cuota
+    operable, una por partido y repartidas entre deportes; si no llegan a n_min, se completa con selecciones de
+    probabilidad alta y valor ≥ 0 a su cuota mínima («objetivo»: cogerla solo a esa cuota o más en bet365).
+    Nunca entra una selección con valor negativo a la cuota indicada."""
+    cols = list(pool.columns) + ["rank_tier", "conf", "objetivo"]
+    if pool is None or pool.empty:
+        return pd.DataFrame(columns=cols)
+    now = now or datetime.now(timezone.utc)
+    df = pool.copy()
+    ko = pd.to_datetime(df["kickoff"], utc=True, format="ISO8601", errors="coerce")
+    df = df[(ko > pd.Timestamp(now)) & (ko <= pd.Timestamp(now) + pd.Timedelta(hours=hours))]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df["conf"] = [confidence_score(r.p_final, r.ev, r.n_books, r.n_sharp, bool(r.priced), r.b365_age_h, bool(r.derived))
+                  for r in df.itertuples()]
+    main = df[df["priced"] & df["tier"].isin(["valor", "cuota_alta", "solida", "moderado"])].copy()
+    main["rank_tier"], main["objetivo"] = main["tier"].map(TIER_RANK), False
+    main = main.sort_values(["rank_tier", "conf", "ev"], ascending=[True, False, False])
+    out, seen, per_sport = [], set(), {}
+    cap = max(4, n_max // max(1, main["sport"].nunique())) if not main.empty else n_max
+    for r in main.to_dict("records"):  # una por partido y reparto entre deportes
+        if r["match_id"] in seen or per_sport.get(r["sport"], 0) >= cap:
+            continue
+        out.append(r); seen.add(r["match_id"]); per_sport[r["sport"]] = per_sport.get(r["sport"], 0) + 1
+    for r in main.to_dict("records"):  # si sobra hueco, sin límite por deporte
+        if len(out) >= n_max:
+            break
+        if r["match_id"] not in seen:
+            out.append(r); seen.add(r["match_id"])
+    if len(out) < n_min:
+        rest = df[~df["match_id"].isin(seen) & (df["p_final"] >= 0.55) & (df["tier"] != "revisar")].copy()
+        rest["objetivo"] = True
+        rest["cur_odds"] = rest["odds"].where(rest["priced"])
+        rest["rank_tier"] = TIER_RANK["objetivo"]
+        rest["min_odds"] = (100 / rest["p_final"]).map(lambda x: int(-(-x // 1)) / 100)  # justo, redondeo arriba
+        # a la cuota indicada el valor es ≥ 0: si la cuota operable ya la paga, se usa esa
+        rest["odds"] = rest[["odds", "min_odds"]].max(axis=1).where(rest["priced"], rest["min_odds"])
+        rest["ev"] = rest["p_final"] * rest["odds"] - 1
+        rest = rest.sort_values(["conf", "p_final"], ascending=False)
+        for r in rest.to_dict("records"):
+            if len(out) >= n_min:
+                break
+            if r["match_id"] not in seen:
+                out.append(r); seen.add(r["match_id"])
+    res = pd.DataFrame(out)
+    return res.reset_index(drop=True) if not res.empty else pd.DataFrame(columns=cols)
+
+
+def combo_of_day(combos: pd.DataFrame) -> dict | None:
+    """La combinada recomendada del día: con valor si la hay; si no, la sólida de más probabilidad; si no, la de menor
+    margen con todas las cuotas operables. Nunca una «por confirmar» si existe otra."""
+    if combos is None or combos.empty:
+        return None
+    pref = {"valor": 0, "solida": 1, "sin_ventaja": 2, "pronostico": 2, "verificar": 3}
+    c = combos.assign(_p=combos["tier"].map(pref).fillna(4))
+    c = c.sort_values(["_p", "ev", "prob"], ascending=[True, False, False])
+    return c.iloc[0].drop(labels="_p").to_dict()
+
+
+def day_table(analysis: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
+    """Tabla interactiva de la jornada (una fila por partido) ya lista para mostrar: sin NaN ni None."""
+    from .config import SPORTS, book_name, league_name
+    cols = ["Hora", "Deporte", "Competición", "Partido", "Selección", "Nivel", "Prob. real", "Cuota", "Casa", "Valor",
+            "Confianza", "Recomendación", "_tier", "_sport", "_kickoff"]
+    if analysis is None or analysis.empty:
+        return pd.DataFrame(columns=cols)
+    names = {"valor": "💎 Élite", "cuota_alta": "🔥 Cuota alta", "solida": "🛡️ Sólida", "moderado": "⚖️ Moderado",
+             "verificar": "🎯 Por confirmar", "revisar": "⚠️ Revisar", "pronostico": "· Sin ventaja",
+             "modelo": "· Sin cuotas", "sin_datos": "· Sin datos"}
+    tz = __import__("zoneinfo").ZoneInfo("Europe/Madrid")
+    rows = []
+    for r in analysis.to_dict("records"):
+        if r.get("tier") in ("sin_datos", None) or (isinstance(r.get("p_final"), float) and np.isnan(r["p_final"])) \
+                or r.get("p_final") is None:
+            continue  # sin cuotas ni modelo todavía: no hay nada que mostrar en la tabla
+        def g(k):
+            v = r.get(k)
+            return None if v is None or (isinstance(v, float) and np.isnan(v)) else v
+        src, price = g("price_src"), g("price")
+        if price is None and g("b365_odds") is not None:
+            price, src = g("b365_odds"), "bet365"
+        operable = src in ("bet365", "mercado")
+        casa = "bet365" if src == "bet365" else book_name(g("ref_book")) if src == "mercado" else "—"
+        p = g("p_final")
+        ev = (p * price - 1) if (p is not None and price and operable) else None
+        tier = g("tier") or "sin_datos"
+        conf = confidence_score(p, ev, g("n_books"), g("n_sharp"), operable, g("b365_age_h")) if p is not None else 0
+        ko = pd.Timestamp(r["kickoff"]).tz_convert(tz)
+        sp = SPORTS.get(r["sport"], SPORTS["football"])
+        rows.append({"Hora": ko.strftime("%a %d/%m %H:%M").replace("Mon", "lun").replace("Tue", "mar")
+                     .replace("Wed", "mié").replace("Thu", "jue").replace("Fri", "vie").replace("Sat", "sáb")
+                     .replace("Sun", "dom"),
+                     "Deporte": f'{sp["icono"]} {sp["nombre"]}', "Competición": league_name(r["league"]),
+                     "Partido": f'{r["home"]} – {r["away"]}', "Selección": g("label") or "Sin selección todavía",
+                     "Nivel": names.get(tier, tier), "Prob. real": round(p * 100, 1) if p is not None else 0.0,
+                     "Cuota": f"{float(price):.2f}".replace(".", ",") if price and operable else "—", "Casa": casa,
+                     "Valor": f"{ev * 100:+.1f} %".replace(".", ",") if ev is not None else "—", "Confianza": conf,
+                     "Recomendación": g("recommendation") or "Sin cuotas todavía: se analizará en la próxima ejecución",
+                     "_tier": tier, "_sport": r["sport"], "_kickoff": r["kickoff"]})
+    return pd.DataFrame(rows, columns=cols)

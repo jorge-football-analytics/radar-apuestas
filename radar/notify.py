@@ -56,10 +56,13 @@ def format_pick(p: dict) -> str:
 
 def format_combo(c: dict) -> str:
     e = html.escape
-    lines = [f"{COMBO_ICON.get(c['risk'], '')} <b>COMBINADA {c['risk'].upper()}</b> en bet365"]
+    from .config import book_name
+    allb = all(not l.get("ref_book") for l in c["legs"])
+    lines = [f"{COMBO_ICON.get(c['risk'], '')} <b>COMBINADA {c['risk'].upper()}</b>" + (" en bet365" if allb else "")]
     for l in c["legs"]:
+        ref = f" en {book_name(l['ref_book'])} · bet365 ≥ {l['min_odds']:.2f}" if l.get("ref_book") else ""
         lines.append(f"{SPORTS[l['sport']]['icono']} {e(l['partido'])} ({_when(l['kickoff'])})\n"
-                     f"   → {e(l['label'])} @ {l['price']:.2f} ({l['p']:.0%})")
+                     f"   → {e(l['label'])} @ {l['price']:.2f}{ref} ({l['p']:.0%})")
     lines.append(f"\nCuota <b>{c['odds']:.2f}</b> · prob. {c['prob']:.0%} · EV <b>{c['ev']:+.1%}</b> · "
                  f"stake {c['stake']:.2f} €")
     return "\n".join(lines)
@@ -68,9 +71,12 @@ def format_combo(c: dict) -> str:
 def format_digest(day_picks: list[dict], counts: dict, web_url: str = "") -> str:
     lines = ["☀️ <b>Radar del día</b>"]
     if day_picks:
-        lines.append(f"Hoy hay {len(day_picks)} jugada(s) con valor en bet365:")
+        from .config import book_name
+        lines.append(f"Hoy hay {len(day_picks)} jugada(s) con valor:")
         for p in day_picks[:6]:
-            lines.append(f"{SPORTS[p['sport']]['icono']} {html.escape(p['label'])} @ {p['odds']:.2f} "
+            bk = p.get("bookmaker") or "bet365"
+            ref = "" if bk == "bet365" else f" en {book_name(bk)} (bet365 ≥ {p['min_odds']:.2f})"
+            lines.append(f"{SPORTS[p['sport']]['icono']} {html.escape(p['label'])} @ {p['odds']:.2f}{ref} "
                          f"(EV {p['ev']:+.1%}) · {_when(p['kickoff'])}")
     else:
         lines.append("Hoy ninguna cuota de bet365 supera el filtro de valor. No apostar también es una decisión.")

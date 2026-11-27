@@ -97,9 +97,29 @@ OTHER = {
             "oddspapi": "nfl"},
 }
 
-# Mercados que se piden a The Odds API por deporte (cada mercado cuesta 1 crédito por región)
-# (NBA y NFL ya traen hándicap y totales gratis desde ESPN: aquí solo el ganador, 1 crédito)
-ODDS_MARKETS = {"football": "h2h,totals", "basketball": "h2h", "nfl": "h2h", "tennis": "h2h"}
+# Mercados que se piden a The Odds API por deporte (cada mercado cuesta 1 crédito por región). NBA y NFL piden también
+# hándicap y totales: ESPN solo trae los de DraftKings (una casa) y con una sola casa no hay precio justo fiable
+ODDS_MARKETS = {"football": os.getenv("ODDS_MARKETS_FOOTBALL", "h2h,totals"),
+                "basketball": os.getenv("ODDS_MARKETS_NBA", "h2h,spreads,totals"),
+                "nfl": os.getenv("ODDS_MARKETS_NFL", "h2h,spreads,totals"), "tennis": "h2h"}
+
+# Nombre legible de cada casa (para «Cuota ref. mercado 1,85 · William Hill»)
+BOOK_NAMES = {"bet365": "bet365", "pinnacle": "Pinnacle", "williamhill": "William Hill", "betsson": "Betsson",
+              "nordicbet": "NordicBet", "leovegas": "LeoVegas", "leovegas_se": "LeoVegas", "sport888": "888sport",
+              "marathonbet": "Marathonbet", "tipico_de": "Tipico", "betclic_fr": "Betclic", "betclic": "Betclic",
+              "winamax_fr": "Winamax", "winamax_de": "Winamax", "codere_it": "Codere", "pmu_fr": "PMU",
+              "unibet_eu": "Unibet", "unibet_nl": "Unibet", "unibet_se": "Unibet", "unibet_fr": "Unibet",
+              "unibet_uk": "Unibet", "coolbet": "Coolbet", "espn_draftkings": "DraftKings", "draftkings": "DraftKings",
+              "fanduel": "FanDuel", "betway": "Betway", "bwin": "bwin", "paddypower": "Paddy Power",
+              "skybet": "Sky Bet", "ladbrokes_uk": "Ladbrokes", "coral": "Coral", "betvictor": "BetVictor",
+              "betfair_sb_uk": "Betfair Sportsbook", "betfair_ex_eu": "Betfair Exchange", "betfair_ex": "Betfair Exchange",
+              "matchbook": "Matchbook", "suprabets": "Suprabets", "everygame": "Everygame"}
+
+
+def book_name(key: str | None) -> str:
+    if not key:
+        return ""
+    return BOOK_NAMES.get(key) or key.split("_")[0].replace("-", " ").title()
 
 # Duración aproximada de un partido (para el asistente: cuándo se resuelve la apuesta)
 DURATION_MIN = {"football": 115, "tennis": 150, "basketball": 150, "nfl": 200}
@@ -168,11 +188,11 @@ class Settings:
 
     # The Odds API (consenso del mercado; NO incluye bet365 España)
     odds_regions: str = field(default_factory=lambda: os.getenv("ODDS_REGIONS", "eu"))
-    odds_lookahead_h: int = field(default_factory=lambda: _i("ODDS_LOOKAHEAD_H", 48))
+    odds_lookahead_h: int = field(default_factory=lambda: _i("ODDS_LOOKAHEAD_H", 72))
     odds_reserve: int = field(default_factory=lambda: _i("ODDS_RESERVE", 20))
     odds_min_refresh_h: float = field(default_factory=lambda: _f("ODDS_MIN_REFRESH_H", 6))
     # Gastar créditos también en ligas de fútbol nacionales (ya tienen bet365 gratis en football-data)
-    odds_api_football: bool = field(default_factory=lambda: _b("ODDS_API_FOOTBALL", False))
+    odds_api_football: bool = field(default_factory=lambda: _b("ODDS_API_FOOTBALL", True))
 
     # OddsPapi (cuotas reales de bet365 para tenis, NBA, NFL y copas europeas). Plan gratis: 250 peticiones/mes
     oddspapi_monthly: int = field(default_factory=lambda: _i("ODDSPAPI_MONTHLY", 250))
@@ -202,6 +222,8 @@ class Settings:
     max_odds: float = field(default_factory=lambda: _f("MAX_ODDS", 2.60))
     # Nivel 2 · Sólida: alta probabilidad y bet365 paga al menos el precio justo (sin regalar margen)
     solid_min_prob: float = field(default_factory=lambda: _f("SOLID_MIN_PROB", 0.65))
+    # las sólidas son la base de las combinadas: se admiten favoritos claros desde 1,20
+    solid_min_odds: float = field(default_factory=lambda: _f("SOLID_MIN_ODDS", 1.20))
     solid_min_ev: float = field(default_factory=lambda: _f("SOLID_MIN_EV", -0.005))
     # Las sólidas son informativas (no van a Telegram): admiten cuotas de bet365 de hasta 72 h, avisando de la hora
     solid_b365_max_age_h: float = field(default_factory=lambda: _f("SOLID_B365_MAX_AGE_H", 72))
@@ -224,6 +246,8 @@ class Settings:
     max_odds_gap_h: float = field(default_factory=lambda: _f("MAX_ODDS_GAP_H", 6))
     # Cuota de bet365 más vieja que esto → 'verificar' (puede haber cambiado), no 'valor'
     b365_max_age_h: float = field(default_factory=lambda: _f("B365_MAX_AGE_H", 24))
+    # cuota de referencia operable (mejor cuota real de una casa generalista) cuando bet365 no tiene cuota reciente
+    ref_max_age_h: float = field(default_factory=lambda: _f("REF_MAX_AGE_H", 12))
     # Deportes en los que el modelo NO mueve la probabilidad (peso 0) hasta que el backtest lo justifique
     frozen_model_sports: str = field(default_factory=lambda: os.getenv("FROZEN_MODEL_SPORTS", "football,tennis"))
     # Recalibración en vivo: mínimo de predicciones resueltas para mover el peso del backtest

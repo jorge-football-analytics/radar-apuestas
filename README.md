@@ -17,17 +17,19 @@ Coste: **0 €**. GitHub Actions lo ejecuta cada 3 horas y Streamlit Community C
 
 **Mercados por partido:** ganador (1X2 o moneyline), doble oportunidad, más/menos (goles o puntos), ambos marcan y hándicap, cada uno con su probabilidad real, cuota justa, cuota de bet365 y valor.
 
-**The Odds API no ofrece bet365 en España.** Se usa solo para el consenso del mercado: Pinnacle, Betfair y unas 15 casas más. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos de las próximas 47 h: una consulta por deporte para la lista de partidos (cada 12 h) y una por partido que trae **bet365 y Pinnacle a la vez**, con la misma hora.
+**Cuota operable (v6).** Si bet365 no tiene cuota reciente, el radar no se bloquea: usa la **mejor cuota real** de una casa generalista (William Hill, Unibet, Betsson, 888sport, Marathonbet, DraftKings…), dice cuál es y estima lo que pagaría bet365 (`Cuota ref. mercado 1,85 · William Hill · bet365 ~1,83`), además de la cuota mínima a la que cogerla en bet365. Casas offshore y exchanges nunca sirven de referencia operable, y si la mejor cuota supera en más de un 4 % a la segunda se usa la segunda. Telegram sigue avisando solo con bet365 confirmada.
+
+**The Odds API no ofrece bet365 en España.** Se usa para el consenso del mercado y las cuotas de referencia: Pinnacle, Betfair y unas 15 casas más, ahora también en las ligas nacionales de fútbol y con hándicap y totales en NBA y NFL. El presupuesto se reparte solo: cada 6 h las ligas que juegan en las próximas 24 h, una vez al día el resto. La cuota real de bet365 sale de football-data en fútbol y de **OddsPapi** en el resto. El plan gratis de OddsPapi trae 250 consultas al mes, así que el radar solo las gasta en confirmar los mejores candidatos de las próximas 47 h: una consulta por deporte para la lista de partidos (cada 12 h) y una por partido que trae **bet365 y Pinnacle a la vez**, con la misma hora.
 
 ## La web
 
-Terminal oscura de análisis (Streamlit), pensada para PC y móvil:
-- **Radar de la jornada:** todos los partidos analizados con su selección más interesante, probabilidad real frente a la que implica la cuota de bet365, valor esperado, semáforo (verde, ámbar, rojo, gris) y recomendación. Nunca queda vacía aunque no haya avisos.
+Plataforma oscura de análisis (Streamlit), pensada para PC y móvil:
+- **Centro de mando:** las 4 mejores oportunidades del día en tarjetas (escudos, cuota y casa, velocímetro de confianza, probabilidad real frente a mercado y análisis táctico desplegable), la combinada recomendada del día, el resto de recomendaciones (8-15 al día) y la tabla interactiva de toda la jornada con filtros.
 - **Jugadas:** los 4 niveles (💎 Élite, 🛡️ Sólidas, ⚖️ Valor moderado, 🔥 Cuota alta) más Por confirmar y Revisar, con velocímetro de confianza (0-100), barra de probabilidad, cuota justa, stake y calculadora de stake/beneficio.
 - **Combinadas:** tres perfiles cada jornada (Segura 1,70-2,20 · Equilibrada 2,50-4,00 · Valor EV+ cuando hay ventaja), de cualquier mercado, una pata por partido, con el porqué de cada selección y la probabilidad real conjunta frente a la cuota total.
-- **Partidos:** fichas con forma (V-E-D), racha, rendimiento local/visitante, cara a cara y todos los mercados. Clasificaciones con puntos en casa y fuera y racha; ranking Elo por superficie en tenis.
-- **Asistente de apuesta (copiloto):** banca, riesgo, deportes, cuota objetivo y fecha límite. El riesgo fija el rango de cuota (bajo 1,40-1,90 · medio 1,90-2,80 · alto 2,80-5,00) y el deslizador lo afina; **el rango se respeta siempre**. Orden de preferencia: cuotas de bet365 confirmadas con valor ≥ 0 → selecciones «por confirmar» con la cuota mínima a la que cogerlas → si nada encaja, lo dice y enseña la alternativa más cercana (nunca una apuesta con valor negativo como opción principal). Devuelve 3 planes: opción principal, una más conservadora y otra de mayor retorno, con stake (Kelly fraccionado si hay ventaja; 0,5 % a precio justo; 0 si el valor es negativo) y el porqué de cada selección.
-- **Rendimiento:** curva de banca y yield (Plotly), caída máxima, CLV, desglose por deporte, mercado, rango de cuota, competición y nivel, y calibración. Respeta `METRICS_SINCE`.
+- **Partidos:** ficha profesional de cada partido con gráficos Plotly (probabilidad real frente al mercado, marcadores más probables o distribución del margen, ataque y defensa, racha de los últimos 5), bajas y lesiones, análisis y todos los mercados con su mejor cuota. Clasificaciones y ranking Elo por superficie en tenis.
+- **Asistente de apuesta (copiloto):** banca, riesgo, deportes, cuota objetivo y fecha límite. El riesgo fija el rango de cuota (bajo 1,40-1,90 · medio 1,90-2,80 · alto 2,80-5,00) y el deslizador lo afina; **el rango se respeta siempre**. Orden de preferencia: cuotas de bet365 confirmadas con valor ≥ 0 → selecciones «por confirmar» con la cuota mínima a la que cogerlas → si nada encaja, lo dice y enseña la alternativa más cercana (nunca una apuesta con valor negativo como opción principal). Devuelve siempre 3 propuestas jugables: Conservadora, Equilibrada y Alto retorno (dentro del rango siempre que lo analizado lo permita; si no, marcada como fuera de rango), con stake (Kelly fraccionado si hay ventaja; 0,5 % a precio justo; 0 si el valor es negativo) y el porqué de cada selección.
+- **Rendimiento:** seguimiento en vivo (curva de banca y yield, caída máxima, CLV, desglose por deporte, mercado, cuota, competición, nivel y casa, calibración) y, mientras no haya apuestas resueltas, el backtest histórico con su intervalo de confianza. Respeta `METRICS_SINCE`.
 - **Estado y método:** fuentes en verde o rojo, consultas gastadas, pesos y backtest.
 
 Los datos se leen en `radar/webdata.py` (funciones probadas) y se cachean con `@st.cache_data` por fecha del fichero de la base de datos: la web carga al instante y se refresca sola tras cada análisis.
@@ -35,16 +37,16 @@ Los datos se leen en `radar/webdata.py` (funciones probadas) y se cachean con `@
 ## Cómo decide
 
 1. Estima la probabilidad real de cada resultado con el mercado sin margen, usando **solo casas válidas**: mercado completo, margen creíble (máx. 1,12; exchanges 0,99-1,04) y cuotas tomadas como mucho 6 h antes o después de la de bet365. Si hay casas sharp (Pinnacle, exchanges) se usan solo ellas, y bet365 nunca entra en su propio consenso. El modelo propio está congelado (peso 0) en fútbol y tenis hasta que el backtest demuestre que mejora al mercado.
-2. Compara esa probabilidad con la cuota de bet365: `valor esperado = probabilidad × cuota − 1`.
+2. Compara esa probabilidad con la cuota operable (bet365 si es reciente; si no, la mejor cuota real de otra casa, nombrada): `valor esperado = probabilidad × cuota − 1`.
 3. Clasifica cada jugada:
 
 | Nivel | Qué significa | Dónde sale |
 |---|---|---|
-| 💎 **Élite** | Cuota de bet365 confirmada (menos de 24 h) con valor ≥ +2,5 % sobre el precio justo limpio, cuota 1,30-2,60. Si además hay referencia sharp (Pinnacle o exchange) y el valor es ≥ +3 %, va a Telegram (máx. 5 al día) | Web y Telegram |
-| 🟢 **Sólida** | Probabilidad real ≥ 65 % y bet365 paga al menos el precio justo (valor ≥ −0,5 %), cuota 1,30-2,60. No es ventaja: es no regalar margen. Base de las combinadas | Web |
+| 💎 **Élite** | Cuota operable con valor ≥ +2,5 % sobre el precio justo limpio, cuota 1,30-2,60 (con cuota de otra casa, además referencia sharp). Con bet365 confirmada, referencia sharp y valor ≥ +3 %, va a Telegram (máx. 5 al día) | Web y Telegram |
+| 🛡️ **Sólida** | Probabilidad real ≥ 65 % y la cuota paga al menos el precio justo (valor ≥ −0,5 %), cuota 1,20-2,60. No es ventaja: es no regalar margen. Base de las combinadas | Web |
 | ⚖️ **Valor moderado** | Cuota confirmada con valor entre 0 y +2,5 % y probabilidad ≥ 40 %, cuota 1,30-2,60. Ventaja pequeña: stake pequeño | Web |
 | 🔥 **Cuota alta** | Cuota 2,40-3,80 con valor ≥ +1 % y probabilidad ≥ 25 %. Más varianza: stake Kelly reducido | Web |
-| **Por confirmar** | El mercado sugiere valor, pero falta la cuota de bet365 o es vieja. Se indica la cuota mínima | Web |
+| 🎯 **Por confirmar / cuota objetivo** | No hay cuota operable (o paga menos que el precio justo): se indica la cuota mínima a la que cogerla en bet365 | Web |
 | **Revisar** | Valor > +15 %: casi siempre es un error de datos. Apuesta 0 | Web |
 | **Sin ventaja** | Lo más probable del partido aunque bet365 cobre margen. Información, no recomendación | Radar |
 
@@ -92,6 +94,8 @@ Por eso:
 - `BANKROLL`, `MIN_EV`, `ALERT_EV` y `ALERT_MAX_DAY`.
 - `MIN_ODDS` / `MAX_ODDS` (1,30 / 2,60), `SOLID_MIN_PROB` (0,65) y `SOLID_MIN_EV` (−0,005).
 - `MODERATE_MIN_PROB` (0,40), `HIGH_ODDS_MIN` / `HIGH_ODDS_MAX` (2,40 / 3,80) y `HIGH_MIN_EV` (0,01).
+- `SOLID_MIN_ODDS` (1,20), `REF_MAX_AGE_H` (12: antigüedad máxima de la cuota de referencia), `ODDS_LOOKAHEAD_H` (72),
+  `ODDS_API_FOOTBALL` (1) y `ODDS_MARKETS_NBA` / `ODDS_MARKETS_NFL` (`h2h,spreads,totals`).
 
 ### Bajas y lesiones
 El informe de cada partido muestra las bajas confirmadas: **API-Football** en fútbol (una consulta por día de partidos, con caché de 6 h; el plan gratis da 100 al día) y el parte de lesiones de **ESPN** en NBA y NFL. Para activarlo en fútbol añade el secreto `APIFOOTBALL_KEY` en GitHub → *Settings → Secrets and variables → Actions*. Si falta la clave, o tu plan no cubre la temporada actual, el informe lo dice («sin datos para este partido») en vez de inventar.
@@ -103,7 +107,7 @@ Reboot app*.
 
 ### Comprobar las 7 páginas sin servidor
 ```bash
-python tools/check_pages.py data/radar.db          # OK/FALLO por página; código 1 si alguna falla
+python tools/check_pages.py data/radar.db          # OK/FALLO por página (errores y textos rotos nan/None)
 python tools/check_assistant.py data/radar.db      # 162 combinaciones de riesgo/cuota/tipo/fecha: el asistente respeta el filtro
 STUB_OVERRIDES='{"m_sp":"basketball","pf_tier":"combinadas"}' python tools/check_pages.py
 ```

@@ -20,7 +20,12 @@ def caption(txt): _emit("cap", f'<p class="hint">{txt}</p>')
 def plotly_chart(fig, **k):
     fig.validate()
     _emit("chart", '<div class="empty">[gráfico plotly: %d trazas]</div>' % len(fig.traces))
-def dataframe(df, **k):
+def dataframe(df, column_config=None, **k):
+    if column_config:
+        cols = set(getattr(getattr(df, "data", df), "columns", []))
+        missing = [c for c in column_config if c not in cols]
+        if missing:
+            raise KeyError(f"column_config con columnas inexistentes: {missing}")
     data = getattr(df, "data", df)  # Styler → DataFrame
     if hasattr(df, "to_html"):
         try:
@@ -29,6 +34,20 @@ def dataframe(df, **k):
             raise RuntimeError(f"Styler falla: {ex}")
     _emit("df", data.to_html(classes="tb") if hasattr(data, "to_html") else str(data))
 def stop(): raise StopError()
+
+
+class _ColumnConfig:
+    """st.column_config.*: devuelve un dict con lo que se pidió (solo se comprueba que exista y se pueda llamar)."""
+    def __getattr__(self, name):
+        if name not in ("TextColumn", "NumberColumn", "ProgressColumn", "LinkColumn", "DatetimeColumn",
+                        "CheckboxColumn", "ListColumn", "LineChartColumn", "BarChartColumn", "Column", "ImageColumn"):
+            raise AttributeError(name)
+        return lambda *a, **k: {"tipo": name, **k}
+
+
+column_config = _ColumnConfig()
+def container(**k): return _Ctx()
+def divider(): _emit("md", "<hr>")
 
 
 def cache_data(*a, **k):

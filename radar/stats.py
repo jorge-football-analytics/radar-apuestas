@@ -192,8 +192,9 @@ def scouting(st: dict, home: str, away: str, sport: str, market: str, selection:
 
 
 def price_line(p: float, price: float | None, priced: bool, n_books: int | None = None, n_sharp: int | None = None,
-               derived: bool = False) -> str:
-    """Por qué merece (o no) la pena la cuota, en una frase."""
+               derived: bool = False, ref_book: str | None = None, b365_est: float | None = None) -> str:
+    """Por qué merece (o no) la pena la cuota, en una frase. Con ref_book, la cuota es la mejor real de otra casa."""
+    from .config import book_name
     fair = 1 / p if p else None
     ref = ""
     if n_books:
@@ -206,6 +207,12 @@ def price_line(p: float, price: float | None, priced: bool, n_books: int | None 
         return (f"Aún no hay cuota fiable de bet365: solo merece la pena si paga {_num(math.ceil(100 * fair - 1e-9) / 100, 2)} o más "
                 f"(probabilidad real del {p:.0%}).{ref}")
     ev = p * price - 1
+    if ref_book:
+        need = math.ceil(100 * fair - 1e-9) / 100
+        txt = (f"Cuota ref. mercado {_num(price, 2)} ({book_name(ref_book)})"
+               + (f" · bet365 ~{_num(b365_est, 2)}" if b365_est else "") + f"; lo justo sería {_num(fair, 2)} "
+               f"({'+' if ev >= 0 else ''}{_num(ev * 100)} % de valor). En bet365, cógela solo a {_num(need, 2)} o más.")
+        return txt + ref
     if ev > 0.005:
         txt = f"bet365 paga {_num(price, 2)} y lo justo sería {_num(fair, 2)}: cobras un {_num(ev * 100)} % más de lo que vale."
     elif ev >= -0.015:

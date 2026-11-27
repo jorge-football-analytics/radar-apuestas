@@ -233,7 +233,9 @@ def test_pipeline_end_to_end(tmp_path, monkeypatch):
 
     db = DB(s.db_path)
     picks = db.df("SELECT * FROM picks")
-    assert set(picks["bookmaker"]) == {"bet365"}
+    # sin bet365 reciente se usa la mejor cuota real de otra casa como referencia: queda registrada con su casa
+    assert "bet365" in set(picks["bookmaker"])
+    assert picks.loc[picks["bookmaker"] != "bet365", "verified"].eq(0).all()
     assert set(picks["tier"]) <= {"valor", "verificar", "pronostico", "revisar", "solida", "moderado", "cuota_alta"}
     assert (picks["tier"] == "valor").any()
     nba = picks[picks["sport"] == "basketball"]

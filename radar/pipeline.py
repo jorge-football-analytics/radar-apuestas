@@ -14,12 +14,12 @@ from . import notify
 from .backtest import summarize, tennis_backtest, walk_forward
 from .combos import build_combos, legs_json
 from .model.markets import label as market_label
-from .config import CUPS, FOOTBALL, OTHER, Settings, sport_of
+from .config import CUPS, FOOTBALL, OTHER, Settings, book_name, sport_of
 from .db import DB
 from .learn import metrics, recalibrate, settle
 from .model.dixon_coles import DCModel, fit, score_matrix
 from .model.elo import TeamElo, TennisElo, surface_of
-from .model.markets import market_probs
+from .model.markets import SHARP, market_probs
 from .sources import espn
 from .sources import football_data as fd
 from .sources import tennis_data
@@ -175,6 +175,8 @@ def store_fixtures(db: DB, fx: pd.DataFrame) -> None:
         return
     with db.tx() as c:
         for m in fx.drop_duplicates("match_id").itertuples():
+            if str(m.home).upper() in ("TBD", "TBA", "") or str(m.away).upper() in ("TBD", "TBA", ""):
+                continue  # cuadro de tenis aún sin rival
             c.execute("INSERT OR IGNORE INTO matches (id, league, kickoff, home, away, sport) VALUES (?,?,?,?,?,?)",
                       (m.match_id, m.league, m.kickoff, m.home, m.away, m.sport))
 
@@ -334,6 +336,7 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
     infos = {}
     results = results_by_sport(ctx)
     goal_avg = league_goal_avgs(ctx.fb_hist, now)
+    ratios = b365_ratios(db, now)
     for m in upcoming.to_dict("records"):
         m["sport"] = m.get("sport") or sport_of(m["league"])
         if m["sport"] not in s.active_sports:
@@ -359,7 +362,7 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         b365 = o[o["bookmaker"] == s.book]
         if not b365.empty and (b365["source"] == "football-data").all():
             notes.append("Cuota de bet365 tomada el martes/viernes: confírmala antes de apostar")
-        context = {"goal_avg": goal_avg.get(m["league"]), "model_total": (info or {}).get("total")}
+        context = {"goal_avg": goal_avg.get(m["league"]), "model_total": (info or {}).get("total"), "b365_ratio": ratios}
         cs, ps = evaluate_match(m, o, probs, weights, s, notes, now=now, context=context)
         candidates += cs
         preds += ps
@@ -369,6 +372,31 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
                 c.execute("INSERT OR REPLACE INTO match_info VALUES (?,?,?)", (mid, json.dumps(info, default=float),
                                                                             now.isoformat()))
     return candidates, pd.DataFrame(preds), matches, all_odds
+
+
+def b365_ratios(db: DB, now: datetime) -> dict[str, float]:
+    """Cuánto paga bet365 frente a la cuota mediana de las casas generalistas, por deporte (histórico de la base).
+    Sirve para estimar «bet365 ~1,83» cuando solo hay cuota de referencia de otras casas. Caché diaria."""
+    key = f"b365_ratio_{now:%Y-%m-%d}"
+    cached = db.get(key)
+    if cached:
+        return cached
+    from .value import OFFSHORE
+    o = db.df("SELECT o.match_id, o.bookmaker, o.market, o.selection, o.point, o.price, m.sport FROM odds o "
+              "JOIN matches m ON m.id = o.match_id")
+    out = {}
+    if not o.empty:
+        k = ["match_id", "market", "selection", "point"]
+        b = o[o["bookmaker"] == "bet365"]
+        soft = o[~o["bookmaker"].isin({"bet365", *SHARP, *OFFSHORE})]
+        med = soft.groupby(k)["price"].agg(["median", "count"]).reset_index()
+        j = b.merge(med, on=k)
+        j = j[j["count"] >= 3]
+        for sp, g in j.groupby("sport"):
+            if len(g) >= 30:
+                out[sp] = float(min(1.05, max(0.95, (g["price"] / g["median"]).median())))
+    db.set(key, out)
+    return out
 
 
 def league_goal_avgs(hist: pd.DataFrame, now: datetime, days: int = 365) -> dict[str, float]:
@@ -506,6 +534,9 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
             pool_main = pool[pool["market"] == main]
             r = (pool_main if not pool_main.empty else pool).sort_values("p_final", ascending=False).iloc[0]
         ev, p, verified = float(r["ev"]), float(r["p_final"]), int(r["verified"])
+        src = r.get("price_src") if isinstance(r.get("price_src"), str) else ("bet365" if verified else "estimada")
+        rb = r.get("ref_book") if isinstance(r.get("ref_book"), str) else None
+        who = "bet365" if src == "bet365" else f"la cuota de mercado ({book_name(rb)})" if src == "mercado" else "bet365"
 
         def fp(x: float, signed: bool = False) -> str:  # porcentaje con coma decimal
             return (f"{x:+.1%}" if signed else f"{x:.1%}").replace(".", ",")
@@ -514,29 +545,31 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
         elif top == "solida":
             light, rec = "verde", f"Sólida: {p:.0%} de probabilidad a precio justo · apta para combinadas"
         elif top == "cuota_alta":
-            light, rec = "verde", f"Cuota alta: bet365 paga un {fp(ev, True)} sobre el precio justo · riesgo controlado"
+            light, rec = "verde", f"Cuota alta: {who} paga un {fp(ev, True)} sobre el precio justo · riesgo controlado"
         elif top == "moderado":
             light, rec = "verde", f"Valor moderado: ventaja ligera de {fp(ev, True)} sobre el precio justo"
         elif top == "verificar":
             light, rec = "ambar", f"Por confirmar: apostar solo si bet365 paga {r['min_odds']:.2f} o más".replace(".", ",")
         elif top == "revisar":
             light, rec = "rojo", "Revisar: valor anómalo, probable error de datos. No apostar"
-        elif not verified:
-            light, rec = "gris", "Sin cuota fiable de bet365: solo informativo"
+        elif src not in ("bet365", "mercado"):
+            light, rec = "gris", "Sin cuota fiable todavía: solo informativo"
         elif ev >= -0.03:
-            light, rec = "ambar", f"Sin ventaja: bet365 cobra un margen de {fp(-ev)} sobre el precio justo"
+            light, rec = "ambar", f"Sin ventaja: {who} cobra un margen de {fp(-ev)} sobre el precio justo"
         else:
-            light, rec = "rojo", f"No apostar: bet365 paga un {fp(-ev)} por debajo del precio justo"
+            light, rec = "rojo", f"No apostar: {who} paga un {fp(-ev)} por debajo del precio justo"
         rows.append({**base, "market": r["market"], "selection": r["selection"], "point": r["point"],
                      "label": r["label"], "p_final": p, "fair_odds": 1 / p if p else None,
-                     "b365_odds": r["price"] if verified else None, "b365_age_h": r.get("b365_age_h"), "ev": ev,
+                     "b365_odds": r["price"] if src == "bet365" else None, "b365_age_h": r.get("b365_age_h"), "ev": ev,
+                     "price": r["price"], "price_src": src, "ref_book": rb, "b365_est": r.get("b365_est"),
                      "tier": top, "light": light, "recommendation": rec, "n_books": int(r["n_books"]),
                      "n_sharp": int(r["n_sharp"]), "confidence": r["confidence"], "min_odds": r["min_odds"]})
     return rows
 
 
 SEL_COLS = ["match_id", "market", "selection", "point", "label", "p_final", "p_market", "price", "verified", "ev", "tier",
-            "derived", "weak", "n_books", "n_sharp", "b365_age_h", "min_odds", "updated"]
+            "derived", "weak", "n_books", "n_sharp", "b365_age_h", "min_odds", "updated", "price_src", "ref_book",
+            "b365_est"]
 
 
 def save_selections(db: DB, preds: pd.DataFrame, now: datetime) -> int:
@@ -557,7 +590,8 @@ def save_selections(db: DB, preds: pd.DataFrame, now: datetime) -> int:
 
 ANALYSIS_COLS = ["match_id", "sport", "league", "kickoff", "home", "away", "market", "selection", "point", "label",
                  "p_final", "fair_odds", "b365_odds", "b365_age_h", "ev", "tier", "light", "recommendation", "n_books",
-                 "n_sharp", "confidence", "min_odds", "p_home", "p_draw", "p_away", "n_markets", "updated"]
+                 "n_sharp", "confidence", "min_odds", "p_home", "p_draw", "p_away", "n_markets", "updated", "price",
+                 "price_src", "ref_book", "b365_est"]
 
 
 def save_analysis(db: DB, preds: pd.DataFrame, matches: dict, now: datetime) -> int:

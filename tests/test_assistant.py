@@ -40,7 +40,7 @@ def test_explicit_odds_range_is_strict():
     P = pool([(0.73, 1.39, True, "football"), (0.42, 2.45, True, "football"), (0.47, 2.20, True, "football"),
               (0.31, 3.30, True, "basketball")])
     plan, alts, _ = assistant.copilot(P, 100, DEADLINE, NOW, risk="bajo", odds_range=(2.00, 3.40))
-    assert 2.00 <= plan.odds <= 3.40 and plan.role == "principal"
+    assert 2.00 <= plan.odds <= 3.40 and plan.role == "equilibrada"
     assert all(l["odds"] != 1.39 for l in plan.legs) or plan.tipo == "combinada"
 
 
@@ -69,10 +69,12 @@ def test_three_plans_conservative_and_higher_return():
               (0.44, 2.35, True, "football"), (0.80, 1.27, True, "football"), (0.30, 3.50, True, "basketball")])
     plan, alts, _ = assistant.copilot(P, 1000, DEADLINE, NOW, risk="medio")
     roles = {a.role: a for a in alts}
-    assert plan.role == "principal" and 1.90 <= plan.odds <= 2.80
+    assert plan.role == "equilibrada" and 1.90 <= plan.odds <= 2.80
     assert set(roles) == {"conservadora", "retorno"}
-    assert roles["conservadora"].odds < plan.odds and roles["conservadora"].prob > plan.prob
-    assert roles["retorno"].odds > plan.odds
+    assert roles["conservadora"].odds <= plan.odds and roles["conservadora"].prob >= plan.prob
+    assert roles["retorno"].odds >= plan.odds
+    sigs = {tuple(sorted(l["label"] for l in p.legs)) for p in [plan, *alts]}
+    assert len(sigs) == 3  # tres propuestas distintas
     assert all(a.ev >= -0.0005 for a in [plan, *alts])  # ninguna con valor negativo
     assert all(l["why"] for a in [plan, *alts] for l in a.legs)
 

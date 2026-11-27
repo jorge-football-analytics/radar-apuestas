@@ -81,14 +81,23 @@ class OddsAPI:
         cands = []
         for league, key, markets in self.plan():
             last = self.db.get(f"odds_refresh_{league}")
-            if last and (now - datetime.fromisoformat(last)).total_seconds() < self.s.odds_min_refresh_h * 3600:
+            age_h = (now - datetime.fromisoformat(last)).total_seconds() / 3600 if last else 1e9
+            if age_h < self.s.odds_min_refresh_h:
                 continue
-            evs = self.upcoming_events(key, now)
-            if evs:
-                cands.append((min(e["commence_time"] for e in evs), league, key, markets))
+            evs = self.upcoming_events(key, now)  # gratis
+            if not evs:
+                continue
+            first = min(e["commence_time"] for e in evs)
+            to_first = (datetime.fromisoformat(first.replace("Z", "+00:00")) - now).total_seconds() / 3600
+            # el presupuesto se gasta donde importa: cada 6 h si la liga juega en las próximas 24 h, si no una vez al día
+            if to_first > 24 and age_h < 24:
+                continue
+            # prioridad: lo que no se ha pedido en las últimas 24 h, luego las ligas principales, luego lo que antes empieza
+            prio = FOOTBALL.get(league, {}).get("tier", 1)
+            cands.append((age_h < 24, prio, first, league, key, markets))
         cands.sort()
         rows, spent = [], 0
-        for _, league, key, markets in cands:
+        for _, _, _, league, key, markets in cands:
             cost = len(markets.split(",")) * n_regions
             if spent + cost > budget:
                 log.info("Créditos de The Odds API reservados para otros días (hoy %s/%s)", spent, budget)
