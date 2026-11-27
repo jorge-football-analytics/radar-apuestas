@@ -77,7 +77,7 @@ def candidates(picks: pd.DataFrame, now: datetime, deadline: datetime, sports: l
 def _legs(rows) -> list[dict]:
     keep = ["match_id", "sport", "league", "kickoff", "home", "away", "label", "odds", "p_final", "ev", "tier",
             "risk", "ends", "confidence", "market", "why", "priced", "min_odds", "ref_book", "b365_est", "price_src",
-            "selection", "point", "cur_odds", "cur_book"]
+            "selection", "point", "cur_odds", "cur_book", "ref_price", "ref_age_h"]
     return [{k: r.get(k) for k in keep} for r in rows]
 
 
@@ -378,7 +378,10 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025,
             sel["price_src"], sel["ref_book"], sel["b365_est"] = None, None, None
         # operable: bet365 confirmada o la mejor cuota real de otra casa (referencia de mercado)
         sel["priced"] = (sel["verified"].fillna(0).astype(int) == 1) | (sel["price_src"] == "mercado")
-        sel.loc[sel["price_src"] != "mercado", "ref_book"] = None
+        for col in ("ref_price", "ref_age_h"):
+            if col not in sel:
+                sel[col] = None
+        sel.loc[sel["price_src"] != "mercado", ["ref_book", "ref_price", "ref_age_h"]] = None
         sel.loc[~sel["priced"], "odds"] = (1 / sel.loc[~sel["priced"], "p_final"]).round(2)  # cuota mínima = justa
         sel["risk"] = sel["p_final"].map(risk_of)
         sel["confidence"] = "—"
@@ -386,7 +389,8 @@ def pool_from_db(db, now: datetime, book: str = "bet365", min_ev: float = 0.025,
         sel["why"] = [leg_report(r, r["sport"], r["market"], r["selection"], float(r["point"]),
                                  _json.loads(r["info"]) if isinstance(r["info"], str) else {}, tables, float(r["p_final"]),
                                  float(r["odds"]) if r["priced"] else None, bool(r["priced"]), r.get("n_books"),
-                                 r.get("n_sharp"), bool(r.get("derived")), r.get("ref_book"), r.get("b365_est"))
+                                 r.get("n_sharp"), bool(r.get("derived")), r.get("ref_book"), r.get("b365_est"),
+                                 r.get("ref_price"), r.get("ref_age_h"))
                       for r in sel.to_dict("records")]
         return sel.drop(columns=["info"])
     df = db.df("""SELECT p.match_id, p.market, p.selection, p.point, p.p_final, p.p_model, p.p_market,

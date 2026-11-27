@@ -62,6 +62,8 @@ class Candidate:
     price_src: str = "bet365"   # bet365 · mercado (mejor cuota real de otra casa) · bet365_vieja · estimada
     ref_book: str | None = None
     b365_est: float | None = None
+    ref_price: float | None = None   # mejor cuota real de la otra casa (la operable es la estimación de bet365)
+    ref_age_h: float | None = None
 
     def as_row(self) -> dict:
         return asdict(self)
@@ -83,6 +85,19 @@ def kelly_stake(p: float, odds: float, s: Settings) -> float:
         return 0.0
     f = edge / (odds - 1) * s.kelly_fraction
     return round(min(f, s.max_stake_pct) * s.bankroll, 2)
+
+
+def rec_stake(tier: str, p: float, odds: float, s: Settings) -> float:
+    """Stake recomendado en euros (queda registrado y se liquida solo): Kelly fraccionado si hay ventaja; las sólidas
+    a precio justo (sin ventaja) llevan un stake fijo pequeño para poder medirlas; el resto, 0."""
+    if tier not in ("valor", "solida", "moderado", "cuota_alta"):
+        return 0.0
+    k = kelly_stake(p, odds, s)
+    if k > 0:
+        return k
+    if tier == "solida" and p * odds - 1 >= s.solid_min_ev:
+        return round(s.flat_stake_pct * s.bankroll, 2)
+    return 0.0
 
 
 def model_weight(sport: str, market: str, weights: dict[str, float], s: Settings) -> float:
@@ -141,14 +156,18 @@ def ref_price(odds: pd.DataFrame, market: str, sel: str, point: float, s: Settin
             t = times.loc[gb.index].max()
             if pd.isna(t) or (now_ts - t).total_seconds() / 3600 > s.ref_max_age_h:
                 continue
-        quotes.append((float(pr[sel]), bk))
+        age = None
+        if now_ts is not None and times is not None:
+            t = times.loc[gb.index].max()
+            age = (now_ts - t).total_seconds() / 3600 if pd.notna(t) else None
+        quotes.append((float(pr[sel]), bk, age))
     if not quotes:
         return None
-    quotes.sort(reverse=True)
-    best, book = quotes[0]
+    quotes.sort(key=lambda q: q[0], reverse=True)
+    best, book, age = quotes[0]
     if len(quotes) >= 2 and best > quotes[1][0] * 1.04:
-        best, book = quotes[1]
-    return dict(price=best, book=book, n=len(quotes), median=float(np.median([q for q, _ in quotes])))
+        best, book, age = quotes[1]
+    return dict(price=best, book=book, n=len(quotes), age_h=age, median=float(np.median([q[0] for q in quotes])))
 
 
 def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, weights: dict[str, float],
@@ -199,12 +218,13 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         stale = age_h is not None and age_h > s.b365_max_age_h
         soft = g.loc[~g["bookmaker"].isin(SHARP) & ~g["bookmaker"].isin(OFFSHORE) & (g["bookmaker"] != s.book), "price"]
         ref = None if (verified and not stale) or is_derived else ref_price(odds, market, sel, point, s, now_ts)
-        ratio = float((context.get("b365_ratio") or {}).get(sport, 1.0))
-        ref_book = None
+        ref_book = ref_px = ref_age = None
         if verified and not stale:
             price, price_src = float(b365.max()), "bet365"
         elif ref:
-            price, price_src, ref_book = ref["price"], "mercado", ref["book"]
+            # cuota operable = estimación realista de bet365 España: la de referencia menos el descuento de margen
+            ref_px, ref_book, ref_age = ref["price"], ref["book"], ref["age_h"]
+            price, price_src = round(ref_px * (1 - s.b365_ref_discount), 2), "mercado"
         elif verified:
             price, price_src = float(b365.max()), "bet365_vieja"
         else:
@@ -212,14 +232,12 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
                 continue
             # estimación de lo que pagaría una casa 'blanda' como bet365 (mercado derivado sin cuotas: precio justo)
             price, price_src = (float(np.median(soft)) if not soft.empty else round(1 / max(p_mkt, 1e-6), 3)), "estimada"
-        if price_src == "bet365":
+        if price_src in ("bet365", "mercado"):
             b365_est = price
         elif verified:
             b365_est = float(b365.max())
-        elif ref:
-            b365_est = round(ref["median"] * ratio, 2)
         elif not soft.empty:
-            b365_est = round(float(np.median(soft)) * ratio, 2)
+            b365_est = round(float(np.median(soft)) * (1 - s.b365_ref_discount), 2)
         else:
             b365_est = None
         operable = price_src in ("bet365", "mercado")
@@ -288,9 +306,9 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         if price_src == "bet365":
             reasons.append(f"bet365 paga {price:.2f}")
         elif price_src == "mercado":
-            reasons.append(f"Cuota ref. mercado {price:.2f} ({bname})"
-                           + (f" · bet365 ~{b365_est:.2f}" if b365_est else "")
-                           + (f" (cuota de bet365 de hace {age_h:.0f} h)" if verified and age_h else ""))
+            reasons.append(f"Cuota ref. mercado {ref_px:.2f} ({bname}) → bet365 estimada {price:.2f} "
+                           f"(−{s.b365_ref_discount * 100:.1f} %)"
+                           + (f" · cuota de referencia de hace {ref_age:.0f} h" if ref_age and ref_age > s.ref_stale_h else ""))
         elif price_src == "bet365_vieja":
             reasons.append(f"bet365 pagaba {price:.2f} hace {age_h:.0f} h: confírmala")
         elif b365_bad:
@@ -315,13 +333,12 @@ def evaluate_match(match: dict, odds: pd.DataFrame, model_probs: dict | None, we
         cands.append(Candidate(
             match["id"], sport, match["league"], match["kickoff"], match["home"], match["away"], market, sel, point,
             label(market, sel, point, match["home"], match["away"], unit), p_mod, p_mkt, p, price, ref_book or s.book,
-            price if price_src == "bet365" else None, ev, kelly_stake(p, price, s) if tier in ("valor", "solida", "moderado", "cuota_alta")
-            else 0.0, conf,
+            price if price_src == "bet365" else None, ev, rec_stake(tier, p, price, s), conf,
             " | ".join(reasons), n_books, risk_of(p), tier, int(verified and not stale), min_odds_for(tier, p, s), elite,
-            round(score, 4), ev if verified else None, n_sharp, price_src, ref_book, b365_est))
+            round(score, 4), ev if verified else None, n_sharp, price_src, ref_book, b365_est, ref_px, ref_age))
         goal_guess = is_derived and sport == "football" and market in ("ou", "btts", "spread") and not goal_line_known
         preds[-1].update(label=cands[-1].label, price=price, verified=int(verified and not stale), ev=ev, tier=tier,
-                         price_src=price_src, ref_book=ref_book, b365_est=b365_est, derived=int(is_derived),
+                         price_src=price_src, ref_book=ref_book, b365_est=b365_est, ref_price=ref_px, ref_age_h=ref_age, derived=int(is_derived),
                          weak=int(bool(weak_derived or goal_guess)),
                          n_books=n_books, n_sharp=n_sharp, confidence=conf, b365_age_h=age_h,
                          min_odds=cands[-1].min_odds)

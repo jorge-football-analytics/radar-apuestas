@@ -100,6 +100,8 @@ def test_combos_decorrelated_and_honest_joint_probability():
         assert all(l["why"] for l in c["legs"])  # cada pata explica su porqué
         if c["tier"] == "valor":
             assert c["ev"] >= s.combo_min_ev and all(l["ev"] >= 0 for l in c["legs"]) and c["stake"] > 0
+        elif c["tier"] == "solida":  # stake fijo pequeño (se registra y se mide aunque no haya ventaja)
+            assert c["stake"] == pytest.approx(s.flat_stake_pct * s.bankroll)
         else:
             assert c["stake"] == 0
 

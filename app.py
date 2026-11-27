@@ -191,18 +191,30 @@ details[open] summary::before{content:"▾ "}
 details ul{margin:.5rem 0 0;padding-left:1.1rem}details li{margin:.18rem 0}
 .gauge{display:inline-flex;flex-direction:column;align-items:center;line-height:1}
 .gauge svg{display:block}.gauge span{font-size:.62rem;color:var(--mute);letter-spacing:.06em;text-transform:uppercase;margin-top:1px}
-/* lista compacta */
-.rows{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--panel)}
-.row{display:grid;grid-template-columns:44px minmax(180px,1.6fr) minmax(160px,1.3fr) 92px 84px 84px 64px;gap:.8rem;align-items:center;
-padding:.65rem .9rem;border-top:1px solid var(--line)}
+/* lista compacta: todas las columnas visibles sin corte (rejilla con mínimos 0 + puntos suspensivos) */
+.rows{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--panel);container-type:inline-size}
+.row{display:grid;grid-template-columns:36px minmax(0,1.5fr) minmax(0,1.25fr) 96px 60px 66px 54px;gap:.7rem;align-items:center;
+padding:.65rem .85rem;border-top:1px solid var(--line)}
+.row>*{min-width:0}
 .row:first-child{border-top:0}.row:hover{background:#101824}
-.row .m b{display:block;font-weight:600;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .m span,.row .s span{color:var(--mute);font-size:.76rem}
-.row .s b{display:block;font-size:.92rem}
-.row .o{font-family:var(--mono);font-weight:700;font-size:1.05rem;color:var(--amber);text-align:right}
-.row .o small{display:block;font-size:.66rem;color:var(--mute);font-weight:500}
-.row .n{font-family:var(--mono);text-align:right;font-weight:600}
-.row .n small{display:block;font-size:.66rem;color:var(--mute);font-weight:500}
+.row .m b,.row .m span,.row .s b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .m b{font-weight:600;font-size:.92rem}.row .m span{color:var(--mute);font-size:.76rem}
+.row .s b{font-size:.9rem}.row .s>span{display:block;white-space:nowrap;overflow:hidden;margin-top:.15rem}
+.row .s .bdg{display:inline-flex}
+.row .o{font-family:var(--mono);font-weight:700;font-size:1.02rem;color:var(--amber);text-align:right;white-space:nowrap}
+.row .o small,.row .n small{display:block;font-size:.64rem;color:var(--mute);font-weight:500;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;font-family:var(--sans)}
+.row .n{font-family:var(--mono);text-align:right;font-weight:600;white-space:nowrap}
+@container (max-width:720px){
+.row{grid-template-columns:32px minmax(0,1fr) 84px 54px 60px;grid-template-areas:"c m o n1 n2" "c s o n1 n2";gap:.15rem .6rem}
+.row .cr{grid-area:c}.row .m{grid-area:m}.row .s{grid-area:s}.row .o{grid-area:o}.row .n1{grid-area:n1}.row .n2{grid-area:n2}
+.row .n3{display:none}}
+@container (max-width:430px){
+.row{grid-template-columns:30px minmax(0,1fr) 78px;grid-template-areas:"c m o" "c s o" "c n1 n2"}
+.row .n1{text-align:left}}
+.age{display:inline-block;margin-left:.25rem;padding:0 .35rem;border-radius:999px;background:rgba(255,176,32,.14);
+color:var(--amber);border:1px solid rgba(255,176,32,.45);font-size:.66rem;font-weight:700;font-family:var(--mono);
+white-space:nowrap;vertical-align:middle}
 /* combinadas */
 .card{background:linear-gradient(180deg,var(--panel2),var(--panel) 55%);border:1px solid var(--line);border-radius:18px;padding:1rem 1.1rem;position:relative}
 .card.hero-c{border-color:rgba(255,176,32,.5);box-shadow:0 0 0 1px rgba(255,176,32,.12),0 20px 50px rgba(0,0,0,.35)}
@@ -270,9 +282,6 @@ div[data-testid="stTextInput"] input{background:var(--panel)!important;border-co
 button:focus-visible,summary:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 @media (max-width:900px){
 .block-container{padding:3.2rem .8rem 3rem}.hero h1{font-size:1.5rem}.kpi .v{font-size:1.45rem}
-.row{grid-template-columns:36px 1fr 86px;grid-template-areas:"c m o" "c s s" "c n1 n2"}
-.row .cr{grid-area:c}.row .m{grid-area:m}.row .s{grid-area:s}.row .o{grid-area:o}.row .n1{grid-area:n1;text-align:left}
-.row .n2{grid-area:n2}.row .n3{display:none}
 .inj{grid-template-columns:1fr}.det-vs .tm b{font-size:1.05rem}.nums b{font-size:1.1rem}.nums .odd b{font-size:1.3rem}}
 </style>""", unsafe_allow_html=True)
 
@@ -450,7 +459,8 @@ DAILY = webdata.daily_picks(D["pool"], NOW)
 
 
 def report_for(match_id: str, sport: str, market: str, selection: str, point: float, p: float, price, priced: bool,
-               n_books=None, n_sharp=None, derived: bool = False, stored=None, ref_book=None, b365_est=None) -> list[str]:
+               n_books=None, n_sharp=None, derived: bool = False, stored=None, ref_book=None, b365_est=None,
+               ref_price=None, ref_age_h=None) -> list[str]:
     """Informe de scouting calculado al pintar. Si el partido ya no está en la lista de próximos, el texto guardado."""
     m = MATCHES.get(match_id)
     if m is None:
@@ -458,7 +468,7 @@ def report_for(match_id: str, sport: str, market: str, selection: str, point: fl
     try:
         return leg_report(m, sport, market, selection, float(point or 0), D["info"].get(match_id) or {}, D["tables"],
                           float(p), float(price) if priced and price else None, priced, n_books, n_sharp, derived,
-                          ref_book, b365_est)
+                          ref_book, b365_est, ref_price, ref_age_h)
     except Exception:  # noqa: BLE001  (nunca romper la página por un informe)
         return list(stored or [])
 
@@ -502,6 +512,8 @@ def opp_from_pool(r: dict) -> dict:
     return dict(match_id=r["match_id"], sport=r["sport"], league=r["league"], kickoff=r["kickoff"], home=r["home"],
                 away=r["away"], market=r["market"], label=txt(r.get("label")), p=p, odds=odds, priced=priced and not objetivo,
                 book=book, b365_est=_v(r, "b365_est"), ev=ev, tier=tier, objetivo=objetivo or not priced,
+                ref_price=_v(r, "ref_price") if src == "mercado" else None,
+                ref_age=_v(r, "ref_age_h") if src == "mercado" else None,
                 min_odds=_v(r, "min_odds") or math.ceil(100 / p - 1e-9) / 100, cur_odds=_v(r, "cur_odds"),
                 cur_book=_v(r, "ref_book") if src == "mercado" else ("bet365" if src == "bet365" else None),
                 conf=int(_v(r, "conf") or webdata.confidence_score(p, ev, _v(r, "n_books"), _v(r, "n_sharp"), priced,
@@ -520,10 +532,12 @@ def opp_from_pick(r: dict) -> dict:
     nb = sx.get("n_books") if sx.get("n_books") is not None else r.get("n_books")
     why = report_for(r["match_id"], r["sport"], r["market"], r["selection"], r.get("point", 0), p,
                      odds if priced else None, priced, nb, sx.get("n_sharp"), bool(sx.get("derived")),
-                     stored=str(r.get("reasons") or "").split(" | "), ref_book=ref, b365_est=sx.get("b365_est"))
+                     stored=str(r.get("reasons") or "").split(" | "), ref_book=ref, b365_est=sx.get("b365_est"),
+                     ref_price=sx.get("ref_price"), ref_age_h=sx.get("ref_age_h"))
     return dict(match_id=r["match_id"], sport=r["sport"], league=r["league"], kickoff=r["kickoff"], home=r["home"],
                 away=r["away"], market=r["market"], label=txt(r.get("label")), p=p, odds=odds, priced=priced,
                 book=book if priced else None, b365_est=sx.get("b365_est"), ev=_v(r, "ev"), tier=tier,
+                ref_price=sx.get("ref_price") if ref else None, ref_age=sx.get("ref_age_h") if ref else None,
                 objetivo=not priced, min_odds=_v(r, "min_odds") or math.ceil(100 / p - 1e-9) / 100, cur_odds=None,
                 cur_book=None, conf=webdata.confidence_score(p, _v(r, "ev"), nb, sx.get("n_sharp"), priced,
                                                              sx.get("b365_age_h"), bool(sx.get("derived"))),
@@ -531,15 +545,31 @@ def opp_from_pick(r: dict) -> dict:
                 off=r.get("locked") == 1 and r.get("active") == 0, cur=_v(r, "current_odds"))
 
 
-def price_src_html(o: dict) -> str:
+def age_chip(age) -> str:
+    """Marca de cuota de referencia vieja (más de REF_STALE_H horas)."""
+    return f' <span class="age" title="Cuota de referencia de hace {num(age, 0)} h: compruébala">⏱ {num(age, 0)} h</span>' \
+        if isnum(age) and age > s.ref_stale_h else ""
+
+
+def odds_label(o: dict) -> str:
     if o["objetivo"]:
-        hoy = (f' · hoy paga <b>{num(o["cur_odds"])}</b> ({e(book_name(o["cur_book"]))})'
-               if isnum(o.get("cur_odds")) and o.get("cur_book") else "")
+        return "cuota objetivo"
+    return "bet365" if o["book"] == "bet365" else "bet365 estimada"
+
+
+def price_src_html(o: dict) -> str:
+    disc = f"−{num(s.b365_ref_discount * 100, 1)} %"
+    if o["objetivo"]:
+        hoy = ""
+        if isnum(o.get("cur_odds")) and o.get("cur_book"):
+            hoy = (f' · hoy bet365 {"~" if o["cur_book"] != "bet365" else ""}<b>{num(o["cur_odds"])}</b>'
+                   + (f' (estimada desde {e(book_name(o["cur_book"]))})' if o["cur_book"] != "bet365" else ""))
         return f'<div class="src">Cógela en bet365 solo a <b>{num(o["min_odds"])}</b> o más{hoy}</div>'
     if o["book"] and o["book"] != "bet365":
-        est = f' · bet365 ~<b>{num(o["b365_est"])}</b>' if isnum(o.get("b365_est")) else ""
-        return (f'<div class="src">Cuota ref. mercado <b>{num(o["odds"])}</b> en <b>{e(book_name(o["book"]))}</b>{est}'
-                f' · en bet365, a <b>{num(o["min_odds"])}</b> o más</div>')
+        ref = (f'<b>{num(o["ref_price"])}</b> en <b>{e(book_name(o["book"]))}</b>' if isnum(o.get("ref_price"))
+               else f'<b>{e(book_name(o["book"]))}</b>')
+        return (f'<div class="src">Estimada para bet365 desde la cuota ref. {ref} ({disc}){age_chip(o.get("ref_age"))}'
+                f' · cógela a <b>{num(o["min_odds"])}</b> o más</div>')
     return '<div class="src">Cuota confirmada en <b>bet365</b></div>'
 
 
@@ -550,7 +580,7 @@ def opp_card(o: dict, big: bool = False) -> str:
     badges = badge(o["tier"]) + ('<span class="bdg b-tg">Telegram</span>' if o.get("elite") else "") + \
         (f'<span class="bdg b-none">Ya no cumple · ahora {num(o.get("cur"))}</span>' if o.get("off") else "")
     size = 58 if big else 44
-    odds_k = "cuota objetivo" if o["objetivo"] else ("bet365" if o["book"] == "bet365" else book_name(o["book"]))
+    odds_k = odds_label(o)
     ev_txt = pct(o["ev"], True) if isnum(o["ev"]) and not o["objetivo"] else "≥ 0 %"
     why = "".join(f"<li>{e(txt(w))}</li>" for w in o["why"] if txt(w) != "—")
     pay = (f'<div class="pay">Stake sugerido <b>{num(o["stake"])} €</b> · con 10 € cobras <b>{num(10 * odds)} €</b></div>'
@@ -578,13 +608,14 @@ def opp_rows(opps: list[dict]) -> str:
     for o in opps:
         sp = SPORTS.get(o["sport"], SPORTS["football"])
         odds_v = f'≥ {num(o["min_odds"])}' if o["objetivo"] else num(o["odds"])
-        odds_k = "objetivo bet365" if o["objetivo"] else ("bet365" if o["book"] == "bet365" else book_name(o["book"]))
+        odds_k = "objetivo bet365" if o["objetivo"] else ("bet365" if o["book"] == "bet365" else
+                                                         f'bet365 est. · {book_name(o["book"])}')
         out.append(
             f'<div class="row"><div class="cr">{crest(o["home"], 34)}</div>'
             f'<div class="m"><b>{e(o["home"])} – {e(o["away"])}</b><span>{sp["icono"]} {e(league_name(o["league"]))} · '
             f'{when(o["kickoff"])}</span></div>'
             f'<div class="s"><b>{e(o["label"])}</b><span>{badge(o["tier"])}</span></div>'
-            f'<div class="o">{odds_v}<small>{e(odds_k)}</small></div>'
+            f'<div class="o">{odds_v}<small>{e(odds_k)}{age_chip(o.get("ref_age")) if not o["objetivo"] else ""}</small></div>'
             f'<div class="n n1">{pct(o["p"])}<small>prob. real</small></div>'
             f'<div class="n n2 {sign_cls(o["ev"]) if not o["objetivo"] else "pos"}">'
             f'{pct(o["ev"], True) if not o["objetivo"] else "≥ 0 %"}<small>valor</small></div>'
@@ -628,9 +659,10 @@ def combo_card(r: dict, hero_c: bool = False) -> str:
         unpriced = l.get("priced") is False
         rb = l.get("ref_book")
         lines = report_for(l["match_id"], l.get("sport", "football"), l["market"], l["selection"], l.get("point", 0),
-                           l["p"], l.get("price"), not unpriced, stored=l.get("why"), ref_book=rb)
+                           l["p"], l.get("price"), not unpriced, stored=l.get("why"), ref_book=rb,
+                           ref_price=l.get("ref_price"), ref_age_h=l.get("ref_age_h"))
         why = "".join(f"<li>{e(txt(w))}</li>" for w in lines if txt(w) != "—")
-        src = "objetivo bet365" if unpriced else (book_name(rb) if rb else "bet365")
+        src = "objetivo bet365" if unpriced else (f"bet365 est. · {book_name(rb)}" if rb else "bet365")
         items.append(
             f'<li><span>{SPORTS.get(l.get("sport", "football"), SPORTS["football"])["icono"]} <b>{e(txt(l.get("label")))}</b>'
             f' <span class="lp">· {MK.get(l.get("market"), "")}</span>'
@@ -638,7 +670,7 @@ def combo_card(r: dict, hero_c: bool = False) -> str:
             f'prob. {pct(l["p"])}</span>'
             + (f'<details><summary>Por qué</summary><ul class="why">{why}</ul></details>' if why else "")
             + f'</span><span class="lo">{("≥ " + num(l.get("min_odds"))) if unpriced else num(l["price"])}'
-              f'<small>{e(src)}</small></span></li>')
+              f'<small>{e(src)}{age_chip(l.get("ref_age_h")) if rb and not unpriced else ""}</small></span></li>')
     implied = 1 / r["odds"] if r["odds"] > 1 else 1
     stake = float(r.get("stake") or 0)
     if not stake and not pend and r["ev"] >= -0.0005:
@@ -723,8 +755,9 @@ def match_card(m: dict, a: dict | None) -> str:
     rec = ""
     if a:
         price, srcb = a.get("price"), a.get("price_src")
-        casa = "bet365" if srcb == "bet365" else book_name(a.get("ref_book")) if srcb == "mercado" else ""
-        cuota = f' · <b class="am">{num(price)}</b> {e(casa)}' if isnum(price) and casa else ""
+        casa = "bet365" if srcb == "bet365" else "bet365 est." if srcb == "mercado" else ""
+        cuota = (f' · <b class="am">{num(price)}</b> {e(casa)}' + (age_chip(a.get("ref_age_h")) if srcb == "mercado" else "")
+                 if isnum(price) and casa else "")
         rec = (f'<div class="mc-r"><span class="lt {txt(a.get("light"), "gris")}"></span> {badge(txt(a.get("tier"), "sin_datos"))} '
                f'<b>{e(txt(a.get("label"), "Sin selección todavía"))}</b>{cuota}<br>'
                f'<span class="mute">{e(txt(a.get("recommendation"), "Sin cuotas todavía"))}</span></div>')
@@ -872,16 +905,18 @@ def markets_table(m: dict, sel: pd.DataFrame) -> str:
         p = r.get("p_final")
         src = r.get("price_src")
         price = r.get("price") if src in ("bet365", "mercado") else None
-        casa = "bet365" if src == "bet365" else book_name(r.get("ref_book")) if src == "mercado" else "—"
+        casa = "bet365" if src == "bet365" else (f'bet365 est. · {book_name(r.get("ref_book"))} {num(r.get("ref_price"))}'
+                                                 if src == "mercado" else "—")
         ev = p * price - 1 if isnum(p) and isnum(price) else None
         tier = txt(r.get("tier"), "pronostico")
         rows.append(f'<tr class="{"v" if isnum(ev) and ev >= 0 else ""}"><td>{e(MK.get(r["market"], r["market"]))} · '
                     f'{e(txt(r.get("label")) if txt(r.get("label")) != "—" else mlabel(r["market"], r["selection"], r["point"], m["home"], m["away"], unit))}</td>'
                     f'<td>{pct(p)}</td><td>{num(1 / p) if isnum(p) and p else "—"}</td><td>{num(price)}</td>'
-                    f'<td style="font-family:var(--sans)">{e(casa)}</td><td>{pct(ev, True)}</td>'
+                    f'<td style="font-family:var(--sans)">{e(casa)}{age_chip(r.get("ref_age_h")) if src == "mercado" else ""}</td>'
+                    f'<td>{pct(ev, True)}</td>'
                     f'<td style="font-family:var(--sans)">{badge(tier) if tier in TIER and tier != "pronostico" else ""}</td></tr>')
-    return (f'<div class="scroll"><table class="mk"><tr><th>Mercado</th><th>Prob.</th><th>Justa</th><th>Cuota</th>'
-            f'<th>Casa</th><th>Valor</th><th>Nivel</th></tr>{"".join(rows)}</table></div>')
+    return (f'<div class="scroll"><table class="mk"><tr><th>Mercado</th><th>Prob.</th><th>Justa</th><th>bet365</th>'
+            f'<th>Origen</th><th>Valor</th><th>Nivel</th></tr>{"".join(rows)}</table></div>')
 
 
 def match_detail(mid: str):
@@ -951,7 +986,8 @@ def match_detail(mid: str):
         src = a.get("price_src")
         lines = report_for(mid, m["sport"], a["market"], a["selection"], a.get("point") or 0, a["p_final"],
                            a.get("price"), src in ("bet365", "mercado"), a.get("n_books"), a.get("n_sharp"),
-                           ref_book=a.get("ref_book") if src == "mercado" else None, b365_est=a.get("b365_est"))
+                           ref_book=a.get("ref_book") if src == "mercado" else None, b365_est=a.get("b365_est"),
+                           ref_price=a.get("ref_price"), ref_age_h=a.get("ref_age_h"))
     if lines:
         section("Análisis")
         st.markdown('<ul class="why" style="font-size:.92rem;color:var(--text)">' +
@@ -1002,6 +1038,69 @@ def standings(league: str):
 
 
 
+# ======================================================================= banca por estrategia
+STRAT_COLORS = {"valor": C["amber"], "solida": C["green"], "moderado": C["cyan"], "cuota_alta": "#FF8A4C", "c_segura": C["blue"], "c_equilibrada": C["violet"], "c_valor": "#FF5CA8"}
+STRAT_DEFAULT = ["valor", "solida", "cuota_alta", "c_segura", "c_equilibrada", "c_valor"]
+
+
+def bank_by_strategy(since: str, key: str, compact: bool = False):
+    """Evolución de la banca (€) apostando el stake recomendado en cada estrategia, con selector para comparar o ver
+    una sola. El radar registra y liquida solo cada recomendación, apuestes o no."""
+    R = since_filter(D["resolved"], since)
+    RC = since_filter(D["resolved_combos"], since)
+    curves, summ = webdata.strategy_curves(R, RC, s.bankroll, since, NOW)
+    names = webdata.STRATEGIES
+    with_data = [k for k in names if int(summ.loc[summ["clave"] == k, "apuestas"].iloc[0]) > 0]
+    c1, c2 = st.columns([1.1, 2.4])
+    mode = c1.segmented_control("Vista", ["comparar", "una"], default="comparar", key=f"{key}_mode",
+                                label_visibility="collapsed",
+                                format_func=lambda m: {"comparar": "Comparar estrategias", "una": "Ver una"}[m]) or "comparar"
+    if mode == "una":
+        one = c2.selectbox("Estrategia", list(names), key=f"{key}_one", label_visibility="collapsed",
+                           index=list(names).index(with_data[0]) if with_data else 0, format_func=lambda k: names[k])
+        sel = [one]
+    else:
+        sel = c2.multiselect("Estrategias", list(names), default=[k for k in STRAT_DEFAULT if k in names],
+                             key=f"{key}_sel", label_visibility="collapsed", format_func=lambda k: names[k]) or STRAT_DEFAULT
+    fig = go.Figure()
+    for k in sel:
+        cv = curves[k]
+        fig.add_trace(go.Scatter(x=cv["date"], y=cv["bank"], mode="lines", name=names[k], line=dict(
+            color=STRAT_COLORS.get(k, C["text"]), width=3 if len(sel) == 1 else 2.2, shape="hv"),
+            fill="tozeroy" if len(sel) == 1 else None, fillcolor="rgba(255,176,32,.06)",
+            hovertemplate=names[k] + "<br>%{x|%d/%m %H:%M}: %{y:.2f} €<extra></extra>"))
+    fig.add_hline(y=s.bankroll, line_color=C["mute"], line_width=1, line_dash="dash")
+    lo_ = min([float(curves[k]["bank"].min()) for k in sel] + [s.bankroll])
+    hi_ = max([float(curves[k]["bank"].max()) for k in sel] + [s.bankroll])
+    pad = max(2.0, (hi_ - lo_) * 0.15)
+    fig.update_yaxes(title="Banca (€)", range=[lo_ - pad, hi_ + pad], ticksuffix=" €")
+    fig.update_layout(hovermode="x unified")
+    st.plotly_chart(chart_layout(fig, 300 if compact else 400), width="stretch", config=PLOT_CFG)
+    sm = summ[summ["clave"].isin(sel)]
+    if len(sel) == 1:
+        r = sm.iloc[0]
+        kpi_strip([("Banca inicial", num(r["inicial"]) + " €", "punto de partida", "cyan", ""),
+                   ("Banca actual", num(r["actual"]) + " €", f'{int(r["apuestas"])} apuestas resueltas', "amber", "am"),
+                   ("Beneficio neto", f'{r["beneficio"]:+.2f} €'.replace(".", ","), f'{num(r["staked"])} € apostados',
+                    "green" if r["beneficio"] >= 0 else "red", sign_cls(r["beneficio"])),
+                   ("Yield", pct(r["yield_"], True), "beneficio / apostado", "violet", sign_cls(r["yield_"])),
+                   ("Acierto", pct(r["acierto"], dec=1), "apuestas ganadas", "blue", "")])
+    else:
+        show_df(sm.drop(columns=["clave"]).rename(columns={
+            "estrategia": "Estrategia", "apuestas": "Apuestas", "inicial": "Banca inicial", "actual": "Banca actual",
+            "beneficio": "Beneficio neto", "staked": "Apostado", "yield_": "Yield", "acierto": "Acierto"}),
+            {"Banca inicial": lambda v: num(v) + " €", "Banca actual": lambda v: num(v) + " €",
+             "Beneficio neto": lambda v: f"{v:+.2f} €".replace(".", ","), "Apostado": lambda v: num(v) + " €",
+             "Yield": lambda v: pct(v, True), "Acierto": lambda v: pct(v, dec=1)})
+    n = int(sm["apuestas"].sum())
+    if n < 20:
+        st.markdown(f'<div class="note">{"Aún no hay apuestas resueltas" if n == 0 else f"Solo {n} apuestas resueltas"}'
+                    f'{f" desde el {since}" if since else ""}: la gráfica se irá llenando sola. El radar registra en cada '
+                    'análisis todas sus recomendaciones (Élite, sólidas, valor moderado, cuota alta y una combinada por '
+                    'perfil y día) con su stake en euros y las liquida al terminar los partidos, apuestes o no.</div>',
+                    unsafe_allow_html=True)
+
+
 # ======================================================================= páginas
 def page_home():
     hero("CENTRO DE MANDO", "Las mejores apuestas del día",
@@ -1041,6 +1140,10 @@ def page_home():
             c2.markdown(opp_rows(opps[4:]), unsafe_allow_html=True)
         else:
             empty("Las recomendaciones del día están arriba. Mira toda la jornada en la tabla.")
+    section("Estadísticas del radar · banca por estrategia",
+            hint=f"Banca de {num(s.bankroll, 0)} € apostando el stake recomendado en cada estrategia"
+                 + (f", desde el {SINCE_DEFAULT}." if SINCE_DEFAULT else " (todo el historial)."))
+    bank_by_strategy(SINCE_DEFAULT, "home_bank", compact=True)
     section("Toda la jornada", len(D["analysis"]) if not D["analysis"].empty else 0,
             "Un partido por fila con su selección más interesante. Ordena por cualquier columna o filtra por deporte y nivel.")
     day_table_widget("t")
@@ -1193,15 +1296,18 @@ def plan_card(p: assistant.Plan, n: int) -> str:
         why = "".join(f"<li>{e(txt(w))}</li>" for w in (l.get("why") or []) if txt(w) != "—")
         unpriced = l.get("priced") is False
         rb = l.get("ref_book") if isinstance(l.get("ref_book"), str) else None
-        src = "objetivo bet365" if unpriced else (book_name(rb) if rb else "bet365")
+        src = "objetivo bet365" if unpriced else (f"bet365 est. · {book_name(rb)}" if rb else "bet365")
         odds_txt = f'≥ {num(l.get("min_odds") or l["odds"])}' if unpriced else num(l["odds"])
-        hoy = (f' · hoy paga {num(l["cur_odds"])} en {e(book_name(l.get("cur_book")))}'
+        cb = l.get("cur_book")
+        hoy = (f' · hoy bet365 {"~" if cb != "bet365" else ""}{num(l["cur_odds"])}'
+               + (f' (estimada desde {e(book_name(cb))})' if cb and cb != "bet365" else "")
                if unpriced and isnum(l.get("cur_odds")) else "")
         rows.append(f'<li><span>{sp} <b>{e(txt(l["label"]))}</b> <span class="lp">· {MK.get(l.get("market"), "")}</span><br>'
                     f'<span class="lp">{e(l["home"])} – {e(l["away"])} · {when_nat(l["kickoff"])} · prob. {pct(l["p_final"])}'
                     + (hoy if unpriced else f' · valor {pct(l["ev"], True)}') + '</span>'
                     + (f'<details><summary>Por qué apostar</summary><ul class="why">{why}</ul></details>' if why else "")
-                    + f'</span><span class="lo">{odds_txt}<small>{e(src)}</small></span></li>')
+                    + f'</span><span class="lo">{odds_txt}<small>{e(src)}'
+                      f'{age_chip(l.get("ref_age_h")) if rb and not unpriced else ""}</small></span></li>')
     stt, stc = STATUS_BADGE.get(p.status, (p.status, "b-none"))
     rat = "".join(f"<li>{e(x)}</li>" for x in p.rationale)
     pend = p.status == "por_confirmar"
@@ -1344,6 +1450,9 @@ def page_perf():
     else:
         Rt = R
     k = webdata.kpis(Rt, mode, s.bankroll)
+    section("Evolución de la banca por estrategia",
+            hint=f"Banca inicial {num(s.bankroll, 0)} € y el stake recomendado de cada jugada o combinada.")
+    bank_by_strategy(since, "pf_bank")
     view = st.segmented_control("Vista", ["vivo", "backtest"], default="vivo" if k["n"] else "backtest", key="pf_view",
                                 label_visibility="collapsed",
                                 format_func=lambda v: {"vivo": f"📈 Seguimiento en vivo · {k['n']} resueltas",

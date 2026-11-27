@@ -58,7 +58,7 @@ def table_rows(tables: dict | None, league: str, home: str, away: str) -> dict:
 
 def leg_report(m: dict, sport: str, market: str, selection: str, point: float, info: dict, tables: dict | None,
                p: float, price: float | None, priced: bool, n_books=None, n_sharp=None, derived: bool = False,
-               ref_book: str | None = None, b365_est: float | None = None) -> list[str]:
+               ref_book: str | None = None, b365_est: float | None = None, ref_price=None, ref_age_h=None) -> list[str]:
     """Informe de una pata: scouting deportivo con datos reales + por qué merece (o no) la pena la cuota."""
     st = (info or {}).get("stats") or {}
     try:
@@ -71,7 +71,9 @@ def leg_report(m: dict, sport: str, market: str, selection: str, point: float, i
     ns = int(n_sharp) if n_sharp is not None and not pd.isna(n_sharp) else None
     rb = ref_book if isinstance(ref_book, str) and ref_book else None
     be = float(b365_est) if b365_est is not None and not pd.isna(b365_est) else None
-    return lines + [price_line(p, price, priced, nb, ns, derived, rb, be)]
+    rp = float(ref_price) if ref_price is not None and not pd.isna(ref_price) else None
+    ra = float(ref_age_h) if ref_age_h is not None and not pd.isna(ref_age_h) else None
+    return lines + [price_line(p, price, priced, nb, ns, derived, rb, be, rp, ra)]
 
 
 def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, tables: dict | None = None) -> list[dict]:
@@ -101,12 +103,13 @@ def leg_pool(preds, matches: dict, s: Settings, infos: dict | None = None, table
         info = infos.get(r["match_id"]) or {}
         why = leg_report(m, sp, r["market"], r["selection"], float(r["point"]), info, tables, float(p),
                          price if priced else None, priced, r.get("n_books"), r.get("n_sharp"), bool(r.get("derived")),
-                         ref_book, r.get("b365_est"))
+                         ref_book, r.get("b365_est"), r.get("ref_price"), r.get("ref_age_h"))
         out.append(dict(match_id=r["match_id"], sport=sp, league=m["league"], kickoff=m["kickoff"],
                         partido=f"{m['home']} - {m['away']}", market=r["market"], selection=r["selection"],
                         point=float(r["point"]), label=r.get("label") or r["selection"], p=float(p), price=price,
                         ev=float(ev), priced=priced, tier=r.get("tier"), min_odds=round(1 / p, 2),
-                        ref_book=ref_book, why=why))
+                        ref_book=ref_book, ref_price=r.get("ref_price") if ref_book else None,
+                        ref_age_h=r.get("ref_age_h") if ref_book else None, why=why))
     return out
 
 
@@ -178,6 +181,8 @@ def build_combos(preds, matches: dict[str, dict], s: Settings, infos: dict | Non
             if profile == "valor" and tier != "valor":
                 continue
             f = ev / (o - 1) * s.kelly_fraction * 0.5 if tier == "valor" and o > 1 else 0
+            if tier == "solida":  # sin ventaja pero sin regalar margen: stake fijo pequeño para poder medirla
+                f = s.flat_stake_pct
             legs_out = [{k: v for k, v in c.items()} for c in combo]
             sig = s.book + "|" + profile + "|" + "|".join(sorted(
                 f"{l['match_id']}:{l['market']}:{l['selection']}:{l['point']}" for l in legs_out))

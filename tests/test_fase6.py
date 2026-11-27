@@ -34,19 +34,33 @@ def test_ref_price_best_real_book_with_outlier_guard_and_no_offshore():
     assert ref_price(o3, "ml", "H", 0.0, s, pd.Timestamp(NOW)) is None
 
 
-def test_without_bet365_the_engine_uses_the_market_reference_and_names_the_book():
+def test_without_bet365_the_operable_price_is_a_realistic_bet365_estimate():
     s = Settings()
-    # Pinnacle: 1,55 / 2,60 → local justo ≈ 1,61; William Hill paga 1,68 → +4 % de valor con referencia sharp
-    o = pd.DataFrame(rows("pinnacle", [1.55, 2.60]) + rows("williamhill", [1.68, 2.25]) + rows("unibet_se", [1.60, 2.35])
-                     + rows("betsson", [1.62, 2.30]))
-    cands, preds = evaluate_match(M, o, None, {}, s, now=NOW, context={"b365_ratio": {"basketball": 0.99}})
+    # Pinnacle: 1,50 / 2,80 → local justo ≈ 1,55. William Hill paga 1,74 → bet365 estimada 1,74 × (1 − 5,5 %) = 1,64
+    o = pd.DataFrame(rows("pinnacle", [1.50, 2.80]) + rows("williamhill", [1.74, 2.15]) + rows("unibet_se", [1.69, 2.20])
+                     + rows("betsson", [1.70, 2.20]))
+    cands, preds = evaluate_match(M, o, None, {}, s, now=NOW)
     h = [c for c in cands if c.selection == "H"][0]
-    assert h.price_src == "mercado" and h.ref_book == "williamhill" and h.bookmaker == "williamhill"
-    assert h.tier == "valor" and h.verified == 0 and h.elite == 0  # Telegram solo con bet365 confirmada
-    assert "Cuota ref. mercado 1.68 (William Hill) · bet365 ~1.60" in h.reasons
-    assert h.min_odds * h.p_final >= 1 + s.min_ev - 1e-9  # cuota mínima en bet365 con la ventaja mínima
+    assert h.price_src == "mercado" and h.ref_book == "williamhill" and h.ref_price == 1.74
+    assert h.odds == 1.64 and h.b365_est == 1.64 and abs(h.ev - (h.p_final * 1.64 - 1)) < 1e-9  # EV sobre la estimación
+    assert h.tier == "valor" and h.verified == 0 and h.elite == 0 and h.stake > 0  # Telegram solo con bet365 confirmada
+    assert "Cuota ref. mercado 1.74 (William Hill) → bet365 estimada 1.64 (−5.5 %)" in h.reasons
     pr = [p for p in preds if p["selection"] == "H"][0]
-    assert pr["price_src"] == "mercado" and pr["ref_book"] == "williamhill" and pr["b365_est"] == 1.6
+    assert pr["price_src"] == "mercado" and pr["ref_price"] == 1.74 and pr["ref_age_h"] == 0
+    # con la referencia a 1,62 la estimación (1,53) ya no tiene valor: no se recomienda
+    o2 = pd.DataFrame(rows("pinnacle", [1.50, 2.80]) + rows("williamhill", [1.62, 2.30]) + rows("unibet_se", [1.60, 2.30]))
+    c2, _ = evaluate_match(M, o2, None, {}, s, now=NOW)
+    assert all(c.tier not in ("valor", "moderado", "cuota_alta") for c in c2 if c.selection == "H")
+
+
+def test_old_reference_quote_is_flagged():
+    s = Settings()
+    old = (NOW - timedelta(hours=8)).isoformat()
+    o = pd.DataFrame(rows("pinnacle", [1.50, 2.80]) + rows("williamhill", [1.74, 2.15], t=old) +
+                     rows("unibet_se", [1.66, 2.20], t=old))
+    cands, preds = evaluate_match(M, o, None, {}, s, now=NOW)
+    pr = [p for p in preds if p["selection"] == "H"][0]
+    assert pr["ref_age_h"] == 8 and any("de hace 8 h" in c.reasons for c in cands if c.selection == "H")
 
 
 def test_fresh_bet365_always_wins_over_other_books():
@@ -104,13 +118,15 @@ def test_negative_priced_legs_become_target_odds_never_negative():
 def test_day_table_has_no_broken_values():
     A = pd.DataFrame([
         dict(match_id="1", sport="football", league="laliga", kickoff="2026-11-28T20:00:00+00:00", home="A", away="B",
-             label="Gana A", p_final=0.55, price=1.90, price_src="mercado", ref_book="williamhill", ev=0.045, tier="valor",
+             label="Gana A", p_final=0.55, price=1.90, price_src="mercado", ref_book="williamhill", ref_price=2.01,
+             ref_age_h=7.0, ev=0.045, tier="valor",
              light="verde", recommendation="Élite", n_books=6, n_sharp=1, b365_age_h=None),
         dict(match_id="2", sport="football", league="mexico", kickoff="2026-11-28T21:00:00+00:00", home="Pachuca",
              away="Guadalajara", label=float("nan"), p_final=float("nan"), price=None, price_src=None, ref_book=None,
              ev=None, tier="sin_datos", light="gris", recommendation=None, n_books=None, n_sharp=None, b365_age_h=None)])
     T = webdata.day_table(A, NOW)
-    assert len(T) == 1 and T.iloc[0]["Casa"] == "William Hill" and T.iloc[0]["Cuota"] == "1,90"
+    assert len(T) == 1 and T.iloc[0]["Cuota bet365"] == "1,90 (est.)"
+    assert T.iloc[0]["Referencia"] == "William Hill 2,01 · ⏱ 7 h"  # cuota de referencia vieja: marcada
     flat = " ".join(str(v) for v in T.drop(columns=["_kickoff"]).to_numpy().ravel())
     assert "nan" not in flat.lower() and "None" not in flat
 
@@ -160,3 +176,42 @@ def test_broken_text_detector():
     from check_pages import broken_text
     assert broken_text("<b>nan</b> <p>Equipo None</p>")
     assert not broken_text("<p>Nantes · Nancy · Nonesuch</p><style>.nan{}</style>")
+
+
+def test_strategy_curves_bank_per_strategy_and_flat_when_empty():
+    R = pd.DataFrame([dict(tier="valor", kickoff="2026-11-28T20:00:00+00:00", stake=2.0, profit=1.6, won=1),
+                      dict(tier="valor", kickoff="2026-11-29T20:00:00+00:00", stake=2.0, profit=-2.0, won=0),
+                      dict(tier="solida", kickoff="2026-11-29T18:00:00+00:00", stake=0.5, profit=0.2, won=1),
+                      dict(tier="moderado", kickoff="2026-11-29T18:00:00+00:00", stake=0.0, profit=0.0, won=1)])
+    RC = pd.DataFrame([dict(risk="segura", first_kickoff="2026-11-28T15:00:00+00:00", stake=0.5, profit=-0.5, won=0)])
+    curves, summ = webdata.strategy_curves(R, RC, 100.0, "2026-11-27", NOW)
+    v = summ.set_index("clave")
+    assert v.loc["valor", "apuestas"] == 2 and abs(v.loc["valor", "actual"] - 99.6) < 1e-9
+    assert abs(v.loc["valor", "yield_"] - (-0.1)) < 1e-9 and v.loc["valor", "acierto"] == 0.5
+    assert v.loc["moderado", "apuestas"] == 0  # sin stake no cuenta como apuesta
+    assert v.loc["c_segura", "actual"] == 99.5 and v.loc["c_valor", "actual"] == 100.0
+    assert list(curves["valor"]["bank"]) == [100.0, 101.6, 99.6]
+    assert len(curves["c_valor"]) == 2 and set(curves["c_valor"]["bank"]) == {100.0}  # línea plana, nunca vacía
+    curves0, summ0 = webdata.strategy_curves(pd.DataFrame(), pd.DataFrame(), 100.0, "", NOW)
+    assert all(len(c) == 2 for c in curves0.values()) and (summ0["actual"] == 100.0).all()
+
+
+def test_combos_are_frozen_one_per_profile_per_day(tmp_path):
+    from radar.db import DB
+    from radar.pipeline import persist_combos
+
+    db = DB(tmp_path / "c.db")
+    ko = (NOW + timedelta(hours=8)).isoformat()
+
+    def cb(profile, sig, stake):
+        return dict(risk=profile, bookmaker="bet365", legs=[{"match_id": "m", "market": "1x2", "selection": "H",
+                                                             "point": 0.0, "price": 1.5, "p": 0.7}],
+                    odds=1.9, prob=0.55, ev=0.0, stake=stake, signature=sig, sports="football", first_kickoff=ko,
+                    tier="solida" if stake else "verificar")
+    persist_combos(db, [cb("segura", "a", 0.5), cb("equilibrada", "b", 0.0)], NOW.isoformat(), NOW)
+    later = NOW + timedelta(hours=3)
+    kept = persist_combos(db, [cb("segura", "c", 0.5), cb("equilibrada", "d", 0.0)], later.isoformat(), later)
+    rows = db.df("SELECT risk, signature, locked FROM combos ORDER BY signature")
+    assert list(rows["signature"]) == ["a", "d"]  # la segura del día queda congelada; la de stake 0 se renueva
+    assert [c["signature"] for c in kept] == ["d"]
+    db.close()

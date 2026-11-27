@@ -315,10 +315,13 @@ def combo_of_day(combos: pd.DataFrame) -> dict | None:
     return c.iloc[0].drop(labels="_p").to_dict()
 
 
-def day_table(analysis: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
-    """Tabla interactiva de la jornada (una fila por partido) ya lista para mostrar: sin NaN ni None."""
+def day_table(analysis: pd.DataFrame, now: datetime | None = None, stale_h: float = 6) -> pd.DataFrame:
+    """Tabla interactiva de la jornada (una fila por partido) ya lista para mostrar: sin NaN ni None.
+    Cuota = bet365 confirmada o estimada (referencia de otra casa − descuento); Referencia = la cuota de la otra casa,
+    con ⏱ si tiene más de stale_h horas."""
     from .config import SPORTS, book_name, league_name
-    cols = ["Hora", "Deporte", "Competición", "Partido", "Selección", "Nivel", "Prob. real", "Cuota", "Casa", "Valor",
+    cols = ["Hora", "Deporte", "Competición", "Partido", "Selección", "Nivel", "Prob. real", "Cuota bet365", "Referencia",
+            "Valor",
             "Confianza", "Recomendación", "_tier", "_sport", "_kickoff"]
     if analysis is None or analysis.empty:
         return pd.DataFrame(columns=cols)
@@ -338,7 +341,15 @@ def day_table(analysis: pd.DataFrame, now: datetime | None = None) -> pd.DataFra
         if price is None and g("b365_odds") is not None:
             price, src = g("b365_odds"), "bet365"
         operable = src in ("bet365", "mercado")
-        casa = "bet365" if src == "bet365" else book_name(g("ref_book")) if src == "mercado" else "—"
+        if src == "bet365":
+            casa = "bet365 (confirmada)"
+        elif src == "mercado":
+            age = g("ref_age_h")
+            rp = g("ref_price")
+            casa = (f"{book_name(g('ref_book'))} {rp:.2f}".replace(".", ",") if rp else book_name(g("ref_book"))) + \
+                (f" · ⏱ {age:.0f} h" if age is not None and age > stale_h else "")
+        else:
+            casa = "—"
         p = g("p_final")
         ev = (p * price - 1) if (p is not None and price and operable) else None
         tier = g("tier") or "sin_datos"
@@ -351,8 +362,55 @@ def day_table(analysis: pd.DataFrame, now: datetime | None = None) -> pd.DataFra
                      "Deporte": f'{sp["icono"]} {sp["nombre"]}', "Competición": league_name(r["league"]),
                      "Partido": f'{r["home"]} – {r["away"]}', "Selección": g("label") or "Sin selección todavía",
                      "Nivel": names.get(tier, tier), "Prob. real": round(p * 100, 1) if p is not None else 0.0,
-                     "Cuota": f"{float(price):.2f}".replace(".", ",") if price and operable else "—", "Casa": casa,
+                     "Cuota bet365": (f"{float(price):.2f}".replace(".", ",") + (" (est.)" if src == "mercado" else ""))
+                     if price and operable else "—", "Referencia": casa,
                      "Valor": f"{ev * 100:+.1f} %".replace(".", ",") if ev is not None else "—", "Confianza": conf,
                      "Recomendación": g("recommendation") or "Sin cuotas todavía: se analizará en la próxima ejecución",
                      "_tier": tier, "_sport": r["sport"], "_kickoff": r["kickoff"]})
     return pd.DataFrame(rows, columns=cols)
+
+
+# ------------------------------------------------------------------ banca por estrategia
+STRATEGIES = {"valor": "💎 Solo Élite", "solida": "🛡️ Sólidas", "moderado": "⚖️ Valor moderado",
+              "cuota_alta": "🔥 Cuota alta", "c_segura": "🧩 Combinada Segura", "c_equilibrada": "🧩 Combinada Equilibrada",
+              "c_valor": "🧩 Combinada Valor EV+"}
+
+
+def strategy_curves(resolved: pd.DataFrame, resolved_combos: pd.DataFrame, bankroll: float = 100.0,
+                    since: str = "", now: datetime | None = None) -> tuple[dict, pd.DataFrame]:
+    """Evolución de la banca (€) apostando el stake recomendado en cada estrategia. Devuelve ({clave: DataFrame(date,
+    bank)}, resumen por estrategia con banca inicial y actual, beneficio, yield, acierto y nº de apuestas). Sin
+    apuestas resueltas, cada línea es plana en la banca inicial desde `since` (nunca vacía)."""
+    now = now or datetime.now(timezone.utc)
+    start = pd.Timestamp(since, tz="UTC") if since else None
+    frames = {}
+    if resolved is not None and not resolved.empty:
+        for t in ("valor", "solida", "moderado", "cuota_alta"):
+            frames[t] = resolved[resolved["tier"] == t][["kickoff", "stake", "profit", "won"]].rename(columns={"kickoff": "t"})
+    if resolved_combos is not None and not resolved_combos.empty:
+        for prof in ("segura", "equilibrada", "valor"):
+            frames[f"c_{prof}"] = resolved_combos[resolved_combos["risk"] == prof][["first_kickoff", "stake", "profit", "won"]] \
+                .rename(columns={"first_kickoff": "t"})
+    curves, rows = {}, []
+    for key, name in STRATEGIES.items():
+        df = frames.get(key, pd.DataFrame(columns=["t", "stake", "profit", "won"]))
+        df = df[df["stake"].fillna(0) > 0].copy() if not df.empty else df
+        if not df.empty:
+            df["t"] = pd.to_datetime(df["t"], utc=True, format="ISO8601", errors="coerce")
+            df = df.dropna(subset=["t"]).sort_values("t")
+        t0 = start if start is not None else (df["t"].min() - pd.Timedelta(hours=1) if not df.empty else
+                                               pd.Timestamp(now) - pd.Timedelta(days=7))
+        if df.empty:
+            cur = pd.DataFrame({"date": [t0, pd.Timestamp(now)], "bank": [bankroll, bankroll]})
+            staked = profit = 0.0
+            n, hit = 0, None
+        else:
+            bank = bankroll + df["profit"].fillna(0).cumsum()
+            cur = pd.concat([pd.DataFrame({"date": [t0], "bank": [bankroll]}),
+                             pd.DataFrame({"date": df["t"].values, "bank": bank.values})], ignore_index=True)
+            staked, profit = float(df["stake"].sum()), float(df["profit"].fillna(0).sum())
+            n, hit = len(df), float((df["won"] == 1).mean())
+        curves[key] = cur
+        rows.append(dict(clave=key, estrategia=name, apuestas=n, inicial=bankroll, actual=bankroll + profit,
+                         beneficio=profit, staked=staked, yield_=(profit / staked) if staked else None, acierto=hit))
+    return curves, pd.DataFrame(rows)

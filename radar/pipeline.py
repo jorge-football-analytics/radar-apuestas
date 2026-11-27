@@ -336,7 +336,6 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
     infos = {}
     results = results_by_sport(ctx)
     goal_avg = league_goal_avgs(ctx.fb_hist, now)
-    ratios = b365_ratios(db, now)
     for m in upcoming.to_dict("records"):
         m["sport"] = m.get("sport") or sport_of(m["league"])
         if m["sport"] not in s.active_sports:
@@ -362,7 +361,7 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
         b365 = o[o["bookmaker"] == s.book]
         if not b365.empty and (b365["source"] == "football-data").all():
             notes.append("Cuota de bet365 tomada el martes/viernes: confírmala antes de apostar")
-        context = {"goal_avg": goal_avg.get(m["league"]), "model_total": (info or {}).get("total"), "b365_ratio": ratios}
+        context = {"goal_avg": goal_avg.get(m["league"]), "model_total": (info or {}).get("total")}
         cs, ps = evaluate_match(m, o, probs, weights, s, notes, now=now, context=context)
         candidates += cs
         preds += ps
@@ -372,31 +371,6 @@ def analyze(s: Settings, db: DB, ctx: Ctx, now: datetime, absences: dict, weight
                 c.execute("INSERT OR REPLACE INTO match_info VALUES (?,?,?)", (mid, json.dumps(info, default=float),
                                                                             now.isoformat()))
     return candidates, pd.DataFrame(preds), matches, all_odds
-
-
-def b365_ratios(db: DB, now: datetime) -> dict[str, float]:
-    """Cuánto paga bet365 frente a la cuota mediana de las casas generalistas, por deporte (histórico de la base).
-    Sirve para estimar «bet365 ~1,83» cuando solo hay cuota de referencia de otras casas. Caché diaria."""
-    key = f"b365_ratio_{now:%Y-%m-%d}"
-    cached = db.get(key)
-    if cached:
-        return cached
-    from .value import OFFSHORE
-    o = db.df("SELECT o.match_id, o.bookmaker, o.market, o.selection, o.point, o.price, m.sport FROM odds o "
-              "JOIN matches m ON m.id = o.match_id")
-    out = {}
-    if not o.empty:
-        k = ["match_id", "market", "selection", "point"]
-        b = o[o["bookmaker"] == "bet365"]
-        soft = o[~o["bookmaker"].isin({"bet365", *SHARP, *OFFSHORE})]
-        med = soft.groupby(k)["price"].agg(["median", "count"]).reset_index()
-        j = b.merge(med, on=k)
-        j = j[j["count"] >= 3]
-        for sp, g in j.groupby("sport"):
-            if len(g) >= 30:
-                out[sp] = float(min(1.05, max(0.95, (g["price"] / g["median"]).median())))
-    db.set(key, out)
-    return out
 
 
 def league_goal_avgs(hist: pd.DataFrame, now: datetime, days: int = 365) -> dict[str, float]:
@@ -437,6 +411,28 @@ def verify_with_oddspapi(s: Settings, db: DB, ctx: Ctx, candidates: list, matche
             store_odds(db, df, now)
             added += len(rows)
     return added
+
+
+def persist_combos(db: DB, combos: list[dict], ts: str, now: datetime) -> list[dict]:
+    """Guarda las combinadas del análisis. Las que llevan stake (con valor o sólidas) quedan CONGELADAS: una por perfil
+    y día (hora de Madrid), con su cuota y stake del momento, y se liquidan solas. Así se puede medir cada perfil
+    aunque no se apueste. Las que no llevan stake (sin ventaja o por confirmar) se renuevan en cada análisis.
+    Devuelve las combinadas nuevas que se han guardado (para los avisos)."""
+    tz = ZoneInfo("Europe/Madrid")
+    today = now.astimezone(tz).date()
+    locked = {r[0] for r in db.conn.execute("SELECT risk, created FROM combos WHERE COALESCE(locked, 0) = 1").fetchall()
+              if pd.Timestamp(r[1]).tz_convert(tz).date() == today} if db.conn.execute(
+        "SELECT 1 FROM combos LIMIT 1").fetchone() else set()
+    kept = [c for c in combos if c["risk"] not in locked]
+    with db.tx() as c:
+        c.execute("DELETE FROM combos WHERE alerted=0 AND won IS NULL AND first_kickoff > ? AND COALESCE(locked, 0) = 0",
+                  (ts,))
+        for cb in kept:
+            c.execute("INSERT OR IGNORE INTO combos (created, risk, bookmaker, legs, odds, prob, ev, stake, signature,"
+                      " sports, first_kickoff, tier, locked) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (ts, cb["risk"], cb["bookmaker"], legs_json(cb), cb["odds"], cb["prob"], cb["ev"], cb["stake"],
+                       cb["signature"], cb["sports"], cb["first_kickoff"], cb["tier"], int((cb["stake"] or 0) > 0)))
+    return kept
 
 
 def save_picks(db: DB, candidates: list, ts: str, now: datetime) -> list[dict]:
@@ -536,7 +532,7 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
         ev, p, verified = float(r["ev"]), float(r["p_final"]), int(r["verified"])
         src = r.get("price_src") if isinstance(r.get("price_src"), str) else ("bet365" if verified else "estimada")
         rb = r.get("ref_book") if isinstance(r.get("ref_book"), str) else None
-        who = "bet365" if src == "bet365" else f"la cuota de mercado ({book_name(rb)})" if src == "mercado" else "bet365"
+        who = "bet365" if src == "bet365" else f"bet365 (estimada desde {book_name(rb)})" if src == "mercado" else "bet365"
 
         def fp(x: float, signed: bool = False) -> str:  # porcentaje con coma decimal
             return (f"{x:+.1%}" if signed else f"{x:.1%}").replace(".", ",")
@@ -562,6 +558,7 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
                      "label": r["label"], "p_final": p, "fair_odds": 1 / p if p else None,
                      "b365_odds": r["price"] if src == "bet365" else None, "b365_age_h": r.get("b365_age_h"), "ev": ev,
                      "price": r["price"], "price_src": src, "ref_book": rb, "b365_est": r.get("b365_est"),
+                     "ref_price": r.get("ref_price"), "ref_age_h": r.get("ref_age_h"),
                      "tier": top, "light": light, "recommendation": rec, "n_books": int(r["n_books"]),
                      "n_sharp": int(r["n_sharp"]), "confidence": r["confidence"], "min_odds": r["min_odds"]})
     return rows
@@ -569,7 +566,7 @@ def analysis_rows(preds: pd.DataFrame, matches: dict, now: datetime, s: Settings
 
 SEL_COLS = ["match_id", "market", "selection", "point", "label", "p_final", "p_market", "price", "verified", "ev", "tier",
             "derived", "weak", "n_books", "n_sharp", "b365_age_h", "min_odds", "updated", "price_src", "ref_book",
-            "b365_est"]
+            "b365_est", "ref_price", "ref_age_h"]
 
 
 def save_selections(db: DB, preds: pd.DataFrame, now: datetime) -> int:
@@ -591,7 +588,7 @@ def save_selections(db: DB, preds: pd.DataFrame, now: datetime) -> int:
 ANALYSIS_COLS = ["match_id", "sport", "league", "kickoff", "home", "away", "market", "selection", "point", "label",
                  "p_final", "fair_odds", "b365_odds", "b365_age_h", "ev", "tier", "light", "recommendation", "n_books",
                  "n_sharp", "confidence", "min_odds", "p_home", "p_draw", "p_away", "n_markets", "updated", "price",
-                 "price_src", "ref_book", "b365_est"]
+                 "price_src", "ref_book", "b365_est", "ref_price", "ref_age_h"]
 
 
 def save_analysis(db: DB, preds: pd.DataFrame, matches: dict, now: datetime) -> int:
@@ -764,13 +761,7 @@ def run(s: Settings | None = None, now: datetime | None = None, send: bool = Tru
                           tables=tables) if soon else []
     save_analysis(db, preds, matches, now)
     save_selections(db, preds, now)
-    with db.tx() as c:
-        c.execute("DELETE FROM combos WHERE alerted=0 AND won IS NULL AND first_kickoff > ?", (ts,))
-        for cb in combos:
-            c.execute("INSERT OR IGNORE INTO combos (created, risk, bookmaker, legs, odds, prob, ev, stake, signature,"
-                      " sports, first_kickoff, tier) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (ts, cb["risk"], cb["bookmaker"], legs_json(cb), cb["odds"], cb["prob"], cb["ev"], cb["stake"],
-                       cb["signature"], cb["sports"], cb["first_kickoff"], cb["tier"]))
+    combos = persist_combos(db, combos, ts, now)
 
     sent = send_alerts(s, db, now, matches, combos) if send else 0
     tiers = Counter(c.tier for c in candidates)

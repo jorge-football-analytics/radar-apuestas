@@ -248,6 +248,12 @@ class Settings:
     b365_max_age_h: float = field(default_factory=lambda: _f("B365_MAX_AGE_H", 24))
     # cuota de referencia operable (mejor cuota real de una casa generalista) cuando bet365 no tiene cuota reciente
     ref_max_age_h: float = field(default_factory=lambda: _f("REF_MAX_AGE_H", 12))
+    # bet365 España paga menos que la mejor cuota de otras casas: sin cuota directa de bet365, la cuota operable es la
+    # de referencia con este descuento (5,5 %); el valor, las combinadas y el asistente se calculan sobre ella
+    b365_ref_discount: float = field(default_factory=lambda: _f("B365_REF_DISCOUNT", 0.055))
+    ref_stale_h: float = field(default_factory=lambda: _f("REF_STALE_H", 6))  # se marca como cuota vieja
+    # stake fijo (fracción de la banca) para lo recomendado a precio justo sin ventaja (sólidas, combinadas sólidas)
+    flat_stake_pct: float = field(default_factory=lambda: _f("FLAT_STAKE_PCT", 0.005))
     # Deportes en los que el modelo NO mueve la probabilidad (peso 0) hasta que el backtest lo justifique
     frozen_model_sports: str = field(default_factory=lambda: os.getenv("FROZEN_MODEL_SPORTS", "football,tennis"))
     # Recalibración en vivo: mínimo de predicciones resueltas para mover el peso del backtest
